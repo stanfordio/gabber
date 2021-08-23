@@ -16,7 +16,10 @@ GAB_API_BASE_URL = "https://gab.com/api/v1"
 
 def pull_user(id: int) -> dict:
     logger.info(f"Pulling user #{id}...")
-    response = requests.get(GAB_API_BASE_URL + f"/accounts/{id}")
+    response = requests.get(GAB_API_BASE_URL + f"/accounts/{id}", headers={
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
+        "cookie": "cookie: remember_user_token=eyJfcmFpbHMiOnsibWVzc2FnZSI6IlcxczFNVGMyTVRNM1hTd2lNbGRxTm5oU04za3hURmwwZFV0WWVYaDZVM2dpTENJeE5qSTVORGMzTURrMUxqQTVPVGN4T0RNaVhRPT0iLCJleHAiOiIyMDIyLTA4LTIwVDE2OjMxOjM1LjA5OVoiLCJwdXIiOiJjb29raWUucmVtZW1iZXJfdXNlcl90b2tlbiJ9fQ%3D%3D--639921a904c825056231258db441ad690d769943; __cfruid=df66118de9f77d567f14f32dfd3a4aa7c5c3d2c9-1629490483; _session_id=eyJfcmFpbHMiOnsibWVzc2FnZSI6IklqYzJNMlJsT1RRd05HUTJPR1k0TUdNd05XSTFNbVprTXpkaE56Wm1NbVJpSWc9PSIsImV4cCI6IjIwMjItMDgtMjBUMjA6NDE6MDMuOTUzWiIsInB1ciI6ImNvb2tpZS5fc2Vzc2lvbl9pZCJ9fQ%3D%3D--21e49a0eb45bf49b2828b404417d41c666c48ad0; _gabsocial_session=gw2%2FyFmMmQnzrlaPvbcTz%2FoMirfsYCJVC4%2Bm3TCOxIRF0h3BvX%2FuP7Pepk29D9jQjCDolIOx1t1C0sdhVPj1GjYCAFHsW7Y4w7ugVJ%2Fr2buPMkW%2BPhpD95YfrMSFzSV31DyPh7Gl%2F4BVmaH%2FxRpZMpmFgVyiqfoapIsH1e3eH5JxAQitugArPNy2yCAwMRbmmplg64ZVEusLPnRziRw4PcwAydQKFQVHLHGloccXzzdFGYtaScMEqdRaS55VkPcA26kzIcELjMwI5WWt9wsaOa%2BPk3u3TaujFxd3ppvvfzw5SrabLICRekdy9YvZhWrHIQpPjrVB5FSI4lZQgPEuFBcEAT84iNlp4h9x2umcqRBhOvvQAY%2FEmh642gpZpQ6tSj0ibT5f2OoPBPhteWdsEzfC62TEO5l3w%2B78StaeamNi8pWjLkqBtCaOgDCnsBdZPfQIdWvRK4KeNsiEYVyrjxYxUMG8YiYaRU2s0cWkV6VxvDEk1wA%2FM0rtgPRbSTBSg5Z0MZNDUGA3g3zrI7siohqvJQCNDSzGMTKDgA%3D%3D--qmLxpAf0JI62E%2Bf6--nGGTBi%2FqG7cpLPNrGDcLHA%3D%3D"
+    })
     try:
         result = response.json()
     except json.JSONDecodeError as e:
@@ -98,12 +101,13 @@ def run(threads: int, users_file: str, posts_file: str, first: int, last: int):
 
     users = range(first, int(last["id"]) + 1)
 
-    with open(users_file, "w") as user_file, open(posts_file, "w") as posts_file:
+    with open(users_file, "w") as user_file_out, open(posts_file, "w") as posts_file_out:
         with ThreadPoolExecutor(max_workers=threads) as pool:
-            process_map()
+            for user_id in users:
+                user, posts = pull_user_and_posts(user_id)
             for (user, posts) in tqdm(
-                pool.map(pull_user_and_posts, users ), total=last + 1 - first, desc="pulling users..."
+                pool.map(pull_user_and_posts, users), total=last + 1 - first, desc="pulling users..."
             ):
-                print(json.dumps(user), file=user_file)
+                print(json.dumps(user), file=user_file_out)
                 for post in posts:
-                    print(json.dumps(post), file=posts_file)
+                    print(json.dumps(post), file=posts_file_out)
