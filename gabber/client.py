@@ -25,6 +25,10 @@ logger.add(write_tqdm)
 
 # Setup proxies
 proxies = {"http": os.getenv("HTTP_PROXY"), "https": os.getenv("HTTPS_PROXY")}
+headers={
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
+}
+requests_kwargs = dict(proxies=proxies, headers=headers)
 
 # Constants
 GAB_API_BASE_URL = "https://gab.com/api/v1"
@@ -34,7 +38,7 @@ def pull_user(id: int) -> dict:
     """Pull the given user's information from Gab. Returns None if not found."""
 
     logger.info(f"Pulling user #{id}...")
-    response = requests.get(GAB_API_BASE_URL + f"/accounts/{id}", proxies=proxies)
+    response = requests.get(GAB_API_BASE_URL + f"/accounts/{id}", **requests_kwargs)
     try:
         result = response.json()
     except json.JSONDecodeError as e:
@@ -56,8 +60,8 @@ def pull_statuses(id: int) -> List[dict]:
     while True:
         response = requests.get(
             GAB_API_BASE_URL + f"/accounts/{id}/statuses",
-            proxies=proxies,
             params=params,
+            **requests_kwargs
         )
         try:
             result = response.json()
