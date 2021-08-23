@@ -25,8 +25,8 @@ logger.add(write_tqdm)
 
 # Setup proxies
 proxies = {"http": os.getenv("HTTP_PROXY"), "https": os.getenv("HTTPS_PROXY")}
-headers={
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
+headers = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
 }
 requests_kwargs = dict(proxies=proxies, headers=headers)
 
@@ -61,7 +61,7 @@ def pull_statuses(id: int) -> List[dict]:
         response = requests.get(
             GAB_API_BASE_URL + f"/accounts/{id}/statuses",
             params=params,
-            **requests_kwargs
+            **requests_kwargs,
         )
         try:
             result = response.json()
@@ -165,8 +165,12 @@ def find_latest_user() -> int:
 )
 @click.option("--first", default=0, help="The first user ID to pull.", type=int)
 @click.option("--last", default=None, help="The last user ID to pull.", type=int)
-@click.option('--posts/--no-posts', default=False, help="Pull posts (WIP; defaults to no posts).")
-def run(threads: int, users_file: str, posts_file: str, first: int, last: int, posts: bool):
+@click.option(
+    "--posts/--no-posts", default=False, help="Pull posts (WIP; defaults to no posts)."
+)
+def run(
+    threads: int, users_file: str, posts_file: str, first: int, last: int, posts: bool
+):
     """Pull all the users and (optionally) posts from Gab."""
 
     if last is None:
