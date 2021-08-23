@@ -152,16 +152,16 @@ def find_latest_user() -> int:
 @click.option(
     "--users-file",
     default="gab_users.jsonl",
-    help="Where to output the user file to",
+    help="Where to output the user file to.",
 )
 @click.option(
     "--posts-file",
     default="gab_posts.jsonl",
-    help="Where to output the posts file to",
+    help="Where to output the posts file to.",
 )
-@click.option("--first", default=0, help="The first user ID to pull", type=int)
-@click.option("--last", default=None, help="The last user ID to pull", type=int)
-@click.option('--posts/--no-posts', default=False, help="Pull posts (WIP; defaults to no posts)")
+@click.option("--first", default=0, help="The first user ID to pull.", type=int)
+@click.option("--last", default=None, help="The last user ID to pull.", type=int)
+@click.option('--posts/--no-posts', default=False, help="Pull posts (WIP; defaults to no posts).")
 def run(threads: int, users_file: str, posts_file: str, first: int, last: int, posts: bool):
     """Pull all the users and posts from Gab."""
 
