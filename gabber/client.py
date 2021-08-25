@@ -33,14 +33,13 @@ headers = {
 # Constants
 GAB_API_BASE_URL = "https://gab.com/api/v1"
 
-# Requests
-s = requests.Session()
-retries = Retry(total=5, backoff_factor=0.1)
-s.mount('http://', HTTPAdapter(max_retries=retries))
-s.mount('https://', HTTPAdapter(max_retries=retries))
-
 def _get(*args, **kwargs):
     """Wrapper for requests.get(), except it supports retries."""
+
+    s = requests.Session()
+    retries = Retry(total=5, backoff_factor=0.1)
+    s.mount('http://', HTTPAdapter(max_retries=retries))
+    s.mount('https://', HTTPAdapter(max_retries=retries))
     
     return s.get(*args, proxies=proxies, headers=headers, **kwargs)
 
