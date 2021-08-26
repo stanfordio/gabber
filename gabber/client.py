@@ -13,6 +13,7 @@ import random
 import json
 from concurrent.futures import ThreadPoolExecutor
 from dateutil.parser import parse as date_parse
+from ratelimit import limits, sleep_and_retry
 
 # Setup loggers
 logger.remove()
@@ -33,26 +34,33 @@ headers = {
 # Constants
 GAB_API_BASE_URL = "https://gab.com/api/v1"
 
+# Rate-limited _get function
+@sleep_and_retry
+@limits(calls=10, period=1)
 def _get(*args, **kwargs):
-    """Wrapper for requests.get(), except it supports retries."""
+    """Wrapper for requests.get(), except it supports retries. Also parses json."""
 
     s = requests.Session()
     retries = Retry(total=5, backoff_factor=0.1)
-    s.mount('http://', HTTPAdapter(max_retries=retries))
-    s.mount('https://', HTTPAdapter(max_retries=retries))
-    
-    return s.get(*args, proxies=proxies, headers=headers, **kwargs)
+    s.mount("http://", HTTPAdapter(max_retries=retries))
+    s.mount("https://", HTTPAdapter(max_retries=retries))
 
+    response = s.get(*args, proxies=proxies, headers=headers, timeout=5, **kwargs)
+
+    try:
+        return response.json()
+    except json.JSONDecodeError as e:
+        logger.warning(f"Could not parse JSON from {args[0]}: {response.content.decode('utf-8')}")
+        raise e
 
 def pull_user(id: int) -> dict:
     """Pull the given user's information from Gab. Returns None if not found."""
 
     logger.info(f"Pulling user #{id}...")
-    response = _get(GAB_API_BASE_URL + f"/accounts/{id}")
     try:
-        result = response.json()
+        result = _get(GAB_API_BASE_URL + f"/accounts/{id}")
     except json.JSONDecodeError as e:
-        logger.error(f"Unable to pull user #{id}: {response.content.decode('utf-8')}")
+        logger.error(f"Unable to pull user #{id}: {str(e)}")
         return None
 
     if result.get("error") == "Record not found":
@@ -68,16 +76,13 @@ def pull_statuses(id: int) -> List[dict]:
     params = {}
     all_posts = []
     while True:
-        response = _get(
-            GAB_API_BASE_URL + f"/accounts/{id}/statuses",
-            params=params,
-        )
         try:
-            result = response.json()
-        except json.JSONDecodeError as e:
-            logger.error(
-                f"Unable to pull user #{id}'s statuses': {response.content.decode('utf-8')}"
+            result = _get(
+                GAB_API_BASE_URL + f"/accounts/{id}/statuses",
+                params=params,
             )
+        except json.JSONDecodeError as e:
+            logger.error(f"Unable to pull user #{id}'s statuses': {e}")
             break
 
         if "error" in result:
@@ -119,7 +124,7 @@ def pull_user_and_posts(id: int, pull_posts: bool) -> dict:
 def find_latest_user() -> int:
     """Binary search to find the approximate latest user."""
 
-    lower_bound = 5300000  # Update this from time to time
+    lower_bound = 5318531  # Update this from time to time
     logger.debug("Finding upper bound for user search...")
     upper_bound = lower_bound
     while pull_user(upper_bound) != None:
@@ -216,3 +221,6 @@ def run(
                 except StopIteration:
                     # No more unscheduled users to process
                     pass
+
+if __name__ == "__main__":
+    run()
