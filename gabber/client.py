@@ -185,7 +185,7 @@ def find_latest_user() -> int:
 def run(
     threads: int, users_file: str, posts_file: str, first: int, last: int, posts: bool
 ):
-    """Pull all the users and (optionally) posts from Gab."""
+    """Pull users and (optionally) posts from Gab."""
 
     if last is None:
         last = find_latest_user()
