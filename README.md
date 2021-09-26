@@ -1,5 +1,5 @@
 # Gabber
-Simple tool to pull all posts and users from Gab.
+Simple tool to pull posts and users from Gab.
 
 ## Usage
 
