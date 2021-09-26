@@ -6,7 +6,7 @@ Simple tool to pull posts and users from Gab.
 ```text
 Usage: gabber [OPTIONS]
 
-  Pull all the users and (optionally) posts from Gab.
+  Pull users and (optionally) posts from Gab.
 
 Options:
   --threads INTEGER     Number of threads to use in the pull (if unspecified,
