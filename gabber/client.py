@@ -190,11 +190,11 @@ def run(
     if last is None:
         last = find_latest_user()
 
-    users = iter(range(first, int(last["id"]) + 1))
+    users = iter(range(first, int(last) + 1))
 
     with open(users_file, "w") as user_file, open(posts_file, "w") as posts_file:
         with ThreadPoolExecutor(max_workers=threads) as ex, tqdm(
-            total=int(last["id"]) + 1 - first
+            total=int(last) + 1 - first
         ) as pbar:
             # Submit initial work
             futures = deque(
