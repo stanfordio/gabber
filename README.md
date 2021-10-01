@@ -16,6 +16,10 @@ Options:
   --first INTEGER       The first user ID to pull.
   --last INTEGER        The last user ID to pull.
   --posts / --no-posts  Pull posts (WIP; defaults to no posts).
+  --user TEXT           Username to gab.com account. Required to pull posts.
+                        Uses GAB_USER environment variable if not provided.
+  --password TEXT       Password to gab.com account. Required to pull posts.
+                        Uses GAB_PASS environment variable if not provided.
   --help                Show this message and exit.
 ```
 
