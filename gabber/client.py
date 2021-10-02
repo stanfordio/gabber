@@ -3,7 +3,7 @@ import os
 import click
 import requests
 from itertools import islice
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, date, timedelta, timezone
 from loguru import logger
 from requests.sessions import HTTPAdapter
 from tqdm import tqdm
@@ -68,7 +68,7 @@ def pull_user(id: int) -> dict:
     return result
 
 
-def pull_statuses(id: int, sess_cookie: requests.cookies.RequestsCookieJar) -> List[dict]:
+def pull_statuses(id: int, sess_cookie: requests.cookies.RequestsCookieJar, created_after: date) -> List[dict]:
     """Pull the given user's statuses from Gab. Returns an empty list if not found."""
 
     params = {}
@@ -95,19 +95,30 @@ def pull_statuses(id: int, sess_cookie: requests.cookies.RequestsCookieJar) -> L
 
         posts = sorted(result, key=lambda k: k["id"])
         params["max_id"] = posts[0]["id"]
+        
+        most_recent_date = date_parse(posts[-1]["created_at"]).replace(tzinfo=timezone.utc).date()
+        if created_after and most_recent_date < created_after:
+            # Current and all future batches are too old
+            break
 
         for post in posts:
             post["_pulled"] = datetime.now().isoformat()
+            date_created = date_parse(post["created_at"]).replace(tzinfo=timezone.utc).date()
+            if created_after and date_created < created_after:
+                continue
+
             all_posts.append(post)
 
     return all_posts
 
 
-def pull_user_and_posts(id: int, pull_posts: bool, sess_cookie: requests.cookies.RequestsCookieJar) -> dict:
+def pull_user_and_posts(id: int, pull_posts: bool,
+                        sess_cookie: requests.cookies.RequestsCookieJar,
+                        created_after: date) -> dict:
     """Pull both a user and their posts from Gab. Returns a tuple of (user, posts). Posts is an empty list if the user is not found (i.e., None)."""
 
     user = pull_user(id)
-    posts = pull_statuses(id, sess_cookie) if user is not None and pull_posts else []
+    posts = pull_statuses(id, sess_cookie, created_after) if user is not None and pull_posts else []
 
     if user is None:
         logger.info(f"User #{id} does not exist.")
@@ -202,6 +213,8 @@ def get_sess_cookie(username, password):
 )
 @click.option("--first", default=0, help="The first user ID to pull.", type=int)
 @click.option("--last", default=None, help="The last user ID to pull.", type=int)
+@click.option("--created-after", default=None, help="Only pull posts created on or after the specified date. Defaults to none.",
+              type=date.fromisoformat)
 @click.option(
     "--posts/--no-posts", default=False, help="Pull posts (WIP; defaults to no posts)."
 )
@@ -216,8 +229,8 @@ def get_sess_cookie(username, password):
     help="Password to gab.com account. Required to pull posts. Uses GAB_PASS environment variable if not provided.",
 )
 def run(
-    threads: int, users_file: str, posts_file: str, first: int, last: int, posts: bool,
-    user: str, password: str,
+        threads: int, users_file: str, posts_file: str, first: int, last: int, created_after: date,
+        posts: bool, user: str, password: str,
 ):
     """Pull users and (optionally) posts from Gab."""
 
@@ -237,7 +250,7 @@ def run(
         ) as pbar:
             # Submit initial work
             futures = deque(
-                ex.submit(pull_user_and_posts, user_id, posts, sess_cookie)
+                ex.submit(pull_user_and_posts, user_id, posts, sess_cookie, created_after)
                 for user_id in islice(users, threads * 2)
             )
 
