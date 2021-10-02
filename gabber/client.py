@@ -75,7 +75,7 @@ def pull_statuses(id: int, sess_cookie: requests.cookies.RequestsCookieJar, crea
     all_posts = []
     while True:
         try:
-            url = GAB_API_BASE_URL + f"/accounts/{id}/statuses"
+            url = GAB_API_BASE_URL + f"/accounts/{id}/statuses?exclude_replies=true"
             result = _get(url, params=params, cookies=sess_cookie).json()
         except json.JSONDecodeError as e:
             logger.error(f"Unable to pull user #{id}'s statuses': {e}")
