@@ -213,7 +213,7 @@ def get_sess_cookie(username, password):
 )
 @click.option("--first", default=0, help="The first user ID to pull.", type=int)
 @click.option("--last", default=None, help="The last user ID to pull.", type=int)
-@click.option("--created-after", default=None, help="Only pull posts created on or after the specified date. Defaults to none.",
+@click.option("--created-after", default=None, help="Only pull posts created on or after the specified date, e.g. 2021-10-02 (defaults to none).",
               type=date.fromisoformat)
 @click.option(
     "--posts/--no-posts", default=False, help="Pull posts (WIP; defaults to no posts)."
@@ -221,12 +221,12 @@ def get_sess_cookie(username, password):
 @click.option(
     "--user",
     default=os.environ.get("GAB_USER", ""),
-    help="Username to gab.com account. Required to pull posts. Uses GAB_USER environment variable if not provided.",
+    help="Username to gab.com account. Required to pull posts. If unspecified, uses GAB_USER environment variable.",
 )
 @click.option(
     "--password",
     default=os.environ.get("GAB_PASS", ""),
-    help="Password to gab.com account. Required to pull posts. Uses GAB_PASS environment variable if not provided.",
+    help="Password to gab.com account. Required to pull posts. If unspecified, uses GAB_PASS environment variable.",
 )
 def run(
         threads: int, users_file: str, posts_file: str, first: int, last: int, created_after: date,
