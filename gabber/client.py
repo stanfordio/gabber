@@ -3,7 +3,7 @@ import os
 import click
 import requests
 from itertools import islice
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, date, timedelta, timezone
 from loguru import logger
 from requests.sessions import HTTPAdapter
 from tqdm import tqdm
@@ -12,6 +12,7 @@ from urllib3 import Retry
 import random
 import json
 from concurrent.futures import ThreadPoolExecutor
+from bs4 import BeautifulSoup
 from dateutil.parser import parse as date_parse
 from ratelimit import limits, sleep_and_retry
 
@@ -32,6 +33,7 @@ headers = {
 }
 
 # Constants
+GAB_BASE_URL = "https://gab.com"
 GAB_API_BASE_URL = "https://gab.com/api/v1"
 
 # Rate-limited _get function
@@ -46,19 +48,15 @@ def _get(*args, **kwargs):
     s.mount("https://", HTTPAdapter(max_retries=retries))
 
     response = s.get(*args, proxies=proxies, headers=headers, timeout=5, **kwargs)
+    return response
 
-    try:
-        return response.json()
-    except json.JSONDecodeError as e:
-        logger.warning(f"Could not parse JSON from {args[0]}: {response.content.decode('utf-8')}")
-        raise e
 
 def pull_user(id: int) -> dict:
     """Pull the given user's information from Gab. Returns None if not found."""
 
     logger.info(f"Pulling user #{id}...")
     try:
-        result = _get(GAB_API_BASE_URL + f"/accounts/{id}")
+        result = _get(GAB_API_BASE_URL + f"/accounts/{id}").json()
     except json.JSONDecodeError as e:
         logger.error(f"Unable to pull user #{id}: {str(e)}")
         return None
@@ -70,17 +68,18 @@ def pull_user(id: int) -> dict:
     return result
 
 
-def pull_statuses(id: int) -> List[dict]:
-    """Pull the given user's statises from Gab. Returns an empty list if not found."""
+def pull_statuses(id: int, sess_cookie: requests.cookies.RequestsCookieJar,
+                  created_after: date, replies: bool) -> List[dict]:
+    """Pull the given user's statuses from Gab. Returns an empty list if not found."""
 
     params = {}
     all_posts = []
     while True:
         try:
-            result = _get(
-                GAB_API_BASE_URL + f"/accounts/{id}/statuses",
-                params=params,
-            )
+            url = GAB_API_BASE_URL + f"/accounts/{id}/statuses"
+            if not replies:
+                url += "?exclude_replies=true"
+            result = _get(url, params=params, cookies=sess_cookie).json()
         except json.JSONDecodeError as e:
             logger.error(f"Unable to pull user #{id}'s statuses': {e}")
             break
@@ -99,19 +98,30 @@ def pull_statuses(id: int) -> List[dict]:
 
         posts = sorted(result, key=lambda k: k["id"])
         params["max_id"] = posts[0]["id"]
+        
+        most_recent_date = date_parse(posts[-1]["created_at"]).replace(tzinfo=timezone.utc).date()
+        if created_after and most_recent_date < created_after:
+            # Current and all future batches are too old
+            break
 
         for post in posts:
             post["_pulled"] = datetime.now().isoformat()
+            date_created = date_parse(post["created_at"]).replace(tzinfo=timezone.utc).date()
+            if created_after and date_created < created_after:
+                continue
+
             all_posts.append(post)
 
     return all_posts
 
 
-def pull_user_and_posts(id: int, pull_posts: bool) -> dict:
+def pull_user_and_posts(id: int, pull_posts: bool,
+                        sess_cookie: requests.cookies.RequestsCookieJar,
+                        created_after: date, replies: bool) -> dict:
     """Pull both a user and their posts from Gab. Returns a tuple of (user, posts). Posts is an empty list if the user is not found (i.e., None)."""
 
     user = pull_user(id)
-    posts = pull_statuses(id) if user is not None and pull_posts else []
+    posts = pull_statuses(id, sess_cookie, created_after, replies) if user is not None and pull_posts else []
 
     if user is None:
         logger.info(f"User #{id} does not exist.")
@@ -160,6 +170,33 @@ def find_latest_user() -> int:
     return user
 
 
+# Adapted from https://github.com/ChrisStevens/garc
+def get_sess_cookie(username, password):
+    """Logs in to Gab account and returns the session cookie"""
+    url = GAB_BASE_URL + "/auth/sign_in"
+    try:
+        login_req = _get(url)
+        login_req.raise_for_status()
+
+        login_page = BeautifulSoup(login_req.text, 'html.parser')
+        csrf = login_page.find('meta', attrs={'name': 'csrf-token'})['content']
+        if not csrf:
+            logger.error("Unable to get csrf token from sign in page!")
+            return None
+        
+        payload = {'user[email]': username, 'user[password]': password, 'authenticity_token': csrf}
+        sess_req = requests.request("POST", url, params=payload, cookies=login_req.cookies, headers=headers)
+        sess_req.raise_for_status()
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"Failed request to login page: {str(e)}")
+        return None
+
+    if not sess_req.cookies.get('_session_id'):
+        raise ValueError("Invalid gab.com credentials provided!")
+
+    return sess_req.cookies
+
+
 @click.command()
 @click.option(
     "--threads",
@@ -179,33 +216,54 @@ def find_latest_user() -> int:
 )
 @click.option("--first", default=0, help="The first user ID to pull.", type=int)
 @click.option("--last", default=None, help="The last user ID to pull.", type=int)
+@click.option("--created-after", default=None, help="Only pull posts created on or after the specified date, e.g. 2021-10-02 (defaults to none).",
+              type=date.fromisoformat)
 @click.option(
     "--posts/--no-posts", default=False, help="Pull posts (WIP; defaults to no posts)."
 )
+@click.option(
+    "--replies/--no-replies", default=False, help="Include replies when pulling posts (defaults to no replies)"
+)
+@click.option(
+    "--user",
+    default=os.environ.get("GAB_USER", ""),
+    help="Username to gab.com account. Required to pull posts. If unspecified, uses GAB_USER environment variable.",
+)
+@click.option(
+    "--password",
+    default=os.environ.get("GAB_PASS", ""),
+    help="Password to gab.com account. Required to pull posts. If unspecified, uses GAB_PASS environment variable.",
+)
 def run(
-    threads: int, users_file: str, posts_file: str, first: int, last: int, posts: bool
+        threads: int, users_file: str, posts_file: str, first: int, last: int, created_after: date,
+        posts: bool, replies: bool, user: str, password: str,
 ):
     """Pull users and (optionally) posts from Gab."""
+
+    if posts and (not user or not password):
+        raise ValueError("To pull posts you must provide a Gab username and password!")
+
+    sess_cookie = get_sess_cookie(user, password) if user and password else None
 
     if last is None:
         last = find_latest_user()
 
-    users = iter(range(first, int(last["id"]) + 1))
+    users = iter(range(first, int(last) + 1))
 
     with open(users_file, "w") as user_file, open(posts_file, "w") as posts_file:
         with ThreadPoolExecutor(max_workers=threads) as ex, tqdm(
-            total=int(last["id"]) + 1 - first
+            total=int(last) + 1 - first
         ) as pbar:
             # Submit initial work
             futures = deque(
-                ex.submit(pull_user_and_posts, user_id, posts)
+                ex.submit(pull_user_and_posts, user_id, posts, sess_cookie, created_after, replies)
                 for user_id in islice(users, threads * 2)
             )
 
             while futures:
                 pbar.update(1)
                 try:
-                    (user, found_posts) = futures.popleft().result()
+                    (user, found_posts) = futures.popleft().result() # Waits until complete
 
                     if user is not None:
                         print(json.dumps(user), file=user_file)
