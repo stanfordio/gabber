@@ -68,14 +68,17 @@ def pull_user(id: int) -> dict:
     return result
 
 
-def pull_statuses(id: int, sess_cookie: requests.cookies.RequestsCookieJar, created_after: date) -> List[dict]:
+def pull_statuses(id: int, sess_cookie: requests.cookies.RequestsCookieJar,
+                  created_after: date, replies: bool) -> List[dict]:
     """Pull the given user's statuses from Gab. Returns an empty list if not found."""
 
     params = {}
     all_posts = []
     while True:
         try:
-            url = GAB_API_BASE_URL + f"/accounts/{id}/statuses?exclude_replies=true"
+            url = GAB_API_BASE_URL + f"/accounts/{id}/statuses"
+            if not replies:
+                url += "?exclude_replies=true"
             result = _get(url, params=params, cookies=sess_cookie).json()
         except json.JSONDecodeError as e:
             logger.error(f"Unable to pull user #{id}'s statuses': {e}")
@@ -114,11 +117,11 @@ def pull_statuses(id: int, sess_cookie: requests.cookies.RequestsCookieJar, crea
 
 def pull_user_and_posts(id: int, pull_posts: bool,
                         sess_cookie: requests.cookies.RequestsCookieJar,
-                        created_after: date) -> dict:
+                        created_after: date, replies: bool) -> dict:
     """Pull both a user and their posts from Gab. Returns a tuple of (user, posts). Posts is an empty list if the user is not found (i.e., None)."""
 
     user = pull_user(id)
-    posts = pull_statuses(id, sess_cookie, created_after) if user is not None and pull_posts else []
+    posts = pull_statuses(id, sess_cookie, created_after, replies) if user is not None and pull_posts else []
 
     if user is None:
         logger.info(f"User #{id} does not exist.")
@@ -219,6 +222,9 @@ def get_sess_cookie(username, password):
     "--posts/--no-posts", default=False, help="Pull posts (WIP; defaults to no posts)."
 )
 @click.option(
+    "--replies/--no-replies", default=False, help="Include replies when pulling posts (defaults to no replies)"
+)
+@click.option(
     "--user",
     default=os.environ.get("GAB_USER", ""),
     help="Username to gab.com account. Required to pull posts. If unspecified, uses GAB_USER environment variable.",
@@ -230,7 +236,7 @@ def get_sess_cookie(username, password):
 )
 def run(
         threads: int, users_file: str, posts_file: str, first: int, last: int, created_after: date,
-        posts: bool, user: str, password: str,
+        posts: bool, replies: bool, user: str, password: str,
 ):
     """Pull users and (optionally) posts from Gab."""
 
@@ -250,7 +256,7 @@ def run(
         ) as pbar:
             # Submit initial work
             futures = deque(
-                ex.submit(pull_user_and_posts, user_id, posts, sess_cookie, created_after)
+                ex.submit(pull_user_and_posts, user_id, posts, sess_cookie, created_after, replies)
                 for user_id in islice(users, threads * 2)
             )
 

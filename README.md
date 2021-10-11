@@ -19,6 +19,8 @@ Options:
                                  specified date, e.g. 2021-10-02 (defaults to
                                  none).
   --posts / --no-posts           Pull posts (WIP; defaults to no posts).
+  --replies / --no-replies       Include replies when pulling posts (defaults
+                                 to no replies)
   --user TEXT                    Username to gab.com account. Required to pull
                                  posts. If unspecified, uses GAB_USER
                                  environment variable.
