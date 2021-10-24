@@ -246,7 +246,7 @@ def run(
     sess_cookie = get_sess_cookie(user, password) if user and password else None
 
     if last is None:
-        last = find_latest_user()
+        last = find_latest_user()["id"]
 
     users = iter(range(first, int(last) + 1))
 
