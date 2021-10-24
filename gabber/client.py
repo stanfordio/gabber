@@ -275,7 +275,7 @@ def run(
 
                 # Schedule more work, if available
                 try:
-                    futures.append(ex.submit(pull_user_and_posts, next(users), posts))
+                    futures.append(ex.submit(pull_user_and_posts, next(users), posts, sess_cookie, created_after, replies))
                 except StopIteration:
                     # No more unscheduled users to process
                     pass
