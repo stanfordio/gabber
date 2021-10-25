@@ -43,7 +43,7 @@ def _get(*args, **kwargs):
     """Wrapper for requests.get(), except it supports retries. Also parses json."""
 
     s = requests.Session()
-    retries = Retry(total=5, backoff_factor=0.1)
+    retries = Retry(total=10, backoff_factor=0.5)
     s.mount("http://", HTTPAdapter(max_retries=retries))
     s.mount("https://", HTTPAdapter(max_retries=retries))
 
