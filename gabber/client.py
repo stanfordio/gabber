@@ -60,6 +60,9 @@ def pull_user(id: int) -> dict:
     except json.JSONDecodeError as e:
         logger.error(f"Unable to pull user #{id}: {str(e)}")
         return None
+    except Exception as e:
+        logger.error(f"Misc. error while pulling user {id}: {e}")
+        return None
 
     if result.get("error") == "Record not found":
         return None
@@ -82,6 +85,9 @@ def pull_statuses(id: int, sess_cookie: requests.cookies.RequestsCookieJar,
             result = _get(url, params=params, cookies=sess_cookie).json()
         except json.JSONDecodeError as e:
             logger.error(f"Unable to pull user #{id}'s statuses': {e}")
+            break
+        except Exception as e:
+            logger.error(f"Misc. error while pulling statuses for {id}: {e}")
             break
 
         if "error" in result:
