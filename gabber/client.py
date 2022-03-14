@@ -36,6 +36,7 @@ headers = {
 GAB_BASE_URL = "https://gab.com"
 GAB_API_BASE_URL = "https://gab.com/api/v1"
 
+
 class Client:
     def __init__(self, username: str, password: str, threads: int):
         self.username = username
@@ -48,7 +49,7 @@ class Client:
     @sleep_and_retry
     @limits(calls=10, period=1)
     def _get(self, *args, **kwargs):
-        """Wrapper for requests.get(), except it supports retries. Also parses json."""
+        """Wrapper for requests.get(), except it supports retries."""
 
         s = requests.Session()
         retries = Retry(total=10, backoff_factor=0.5)
@@ -57,7 +58,6 @@ class Client:
 
         response = s.get(*args, proxies=proxies, headers=headers, timeout=5, **kwargs)
         return response
-
 
     def pull_user(self, id: int) -> dict:
         """Pull the given user's information from Gab. Returns None if not found."""
@@ -97,16 +97,20 @@ class Client:
         result["_pulled"] = datetime.now().isoformat()
         return result
 
-    def pull_group_timeline(self, id: int, sess_cookie: requests.cookies.RequestsCookieJar) -> Iterable[dict]:
-        """Pull the given group's timeline from Gab."""
+    def pull_group_posts(self, id: int) -> Iterable[dict]:
+        """Pull the given group's posts from Gab."""
 
         page = 1
         while True:
             try:
-                results = self._get(GAB_API_BASE_URL + f"/timelines/group/{id}", params={
-                    "sort_by": "newest",
-                    "page": page,
-                }, cookies=sess_cookie)
+                results = self._get(
+                    GAB_API_BASE_URL + f"/timelines/group/{id}",
+                    params={
+                        "sort_by": "newest",
+                        "page": page,
+                    },
+                    cookies=self.sess_cookie,
+                ).json()
             except json.JSONDecodeError as e:
                 logger.error(f"Unable to pull group #{id}'s statuses: {e}")
                 break
@@ -118,7 +122,7 @@ class Client:
                 logger.error(
                     f"API returned an error while pulling group #{id}'s statuses: {results}"
                 )
-                break 
+                break
             if len(results) == 0:
                 break
             for result in results:
@@ -126,8 +130,24 @@ class Client:
                 yield result
             page += 1
 
-    def pull_statuses(self, id: int, sess_cookie: requests.cookies.RequestsCookieJar,
-                    created_after: date, replies: bool) -> List[dict]:
+    def pull_group_and_posts(self, id: int, pull_posts: bool) -> dict:
+        """Pull both a group and their its from Gab. Returns a tuple of (group, posts). Posts is an empty list if the group is not found (i.e., None)."""
+
+        group = self.pull_group(id)
+        posts = list(
+            self.pull_group_posts(id) if group is not None and pull_posts else []
+        )
+
+        if group is None:
+            logger.info(f"Group #{id} does not exist.")
+        else:
+            logger.info(
+                f"Pulled {len(posts)} posts from group #{id} ({group['title']})."
+            )
+
+        return (group, posts)
+
+    def pull_statuses(self, id: int, created_after: date, replies: bool) -> List[dict]:
         """Pull the given user's statuses from Gab. Returns an empty list if not found."""
 
         params = {}
@@ -137,7 +157,7 @@ class Client:
                 url = GAB_API_BASE_URL + f"/accounts/{id}/statuses"
                 if not replies:
                     url += "?exclude_replies=true"
-                result = self._get(url, params=params, cookies=sess_cookie).json()
+                result = self._get(url, params=params, cookies=self.sess_cookie).json()
             except json.JSONDecodeError as e:
                 logger.error(f"Unable to pull user #{id}'s statuses': {e}")
                 break
@@ -159,15 +179,19 @@ class Client:
 
             posts = sorted(result, key=lambda k: k["id"])
             params["max_id"] = posts[0]["id"]
-            
-            most_recent_date = date_parse(posts[-1]["created_at"]).replace(tzinfo=timezone.utc).date()
+
+            most_recent_date = (
+                date_parse(posts[-1]["created_at"]).replace(tzinfo=timezone.utc).date()
+            )
             if created_after and most_recent_date < created_after:
                 # Current and all future batches are too old
                 break
 
             for post in posts:
                 post["_pulled"] = datetime.now().isoformat()
-                date_created = date_parse(post["created_at"]).replace(tzinfo=timezone.utc).date()
+                date_created = (
+                    date_parse(post["created_at"]).replace(tzinfo=timezone.utc).date()
+                )
                 if created_after and date_created < created_after:
                     continue
 
@@ -175,21 +199,26 @@ class Client:
 
         return all_posts
 
-
-    def pull_user_and_posts(self, id: int, pull_posts: bool,
-                            created_after: date, replies: bool) -> dict:
+    def pull_user_and_posts(
+        self, id: int, pull_posts: bool, created_after: date, replies: bool
+    ) -> dict:
         """Pull both a user and their posts from Gab. Returns a tuple of (user, posts). Posts is an empty list if the user is not found (i.e., None)."""
 
         user = self.pull_user(id)
-        posts = self.pull_statuses(id, self.sess_cookie, created_after, replies) if user is not None and pull_posts else []
+        posts = (
+            self.pull_statuses(id, created_after, replies)
+            if user is not None and pull_posts
+            else []
+        )
 
         if user is None:
             logger.info(f"User #{id} does not exist.")
         else:
-            logger.info(f"Pulled {len(posts)} posts from user #{id} (@{user['username']}).")
+            logger.info(
+                f"Pulled {len(posts)} posts from user #{id} (@{user['username']})."
+            )
 
         return (user, posts)
-
 
     def find_latest_user(self) -> int:
         """Binary search to find the approximate latest user."""
@@ -229,7 +258,6 @@ class Client:
 
         return user
 
-
     # Adapted from https://github.com/ChrisStevens/garc
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
@@ -238,23 +266,30 @@ class Client:
             login_req = self._get(url)
             login_req.raise_for_status()
 
-            login_page = BeautifulSoup(login_req.text, 'html.parser')
-            csrf = login_page.find('meta', attrs={'name': 'csrf-token'})['content']
+            login_page = BeautifulSoup(login_req.text, "html.parser")
+            csrf = login_page.find("meta", attrs={"name": "csrf-token"})["content"]
             if not csrf:
                 logger.error("Unable to get csrf token from sign in page!")
                 return None
-            
-            payload = {'user[email]': username, 'user[password]': password, 'authenticity_token': csrf}
-            sess_req = requests.request("POST", url, params=payload, cookies=login_req.cookies, headers=headers)
+
+            payload = {
+                "user[email]": username,
+                "user[password]": password,
+                "authenticity_token": csrf,
+            }
+            sess_req = requests.request(
+                "POST", url, params=payload, cookies=login_req.cookies, headers=headers
+            )
             sess_req.raise_for_status()
         except requests.exceptions.HTTPError as e:
             logger.error(f"Failed request to login page: {str(e)}")
             return None
 
-        if not sess_req.cookies.get('_session_id'):
+        if not sess_req.cookies.get("_session_id"):
             raise ValueError("Invalid gab.com credentials provided!")
 
         return sess_req.cookies
+
 
 @click.group()
 @click.option(
@@ -292,18 +327,30 @@ def cli(ctx, user, password, threads):
 )
 @click.option("--first", default=0, help="The first user ID to pull.", type=int)
 @click.option("--last", default=None, help="The last user ID to pull.", type=int)
-@click.option("--created-after", default=None, help="Only pull posts created on or after the specified date, e.g. 2021-10-02 (defaults to none).",
-              type=date.fromisoformat)
+@click.option(
+    "--created-after",
+    default=None,
+    help="Only pull posts created on or after the specified date, e.g. 2021-10-02 (defaults to none).",
+    type=date.fromisoformat,
+)
 @click.option(
     "--posts/--no-posts", default=False, help="Pull posts (WIP; defaults to no posts)."
 )
 @click.option(
-    "--replies/--no-replies", default=False, help="Include replies when pulling posts (defaults to no replies)"
+    "--replies/--no-replies",
+    default=False,
+    help="Include replies when pulling posts (defaults to no replies)",
 )
 @click.pass_context
 def posts(
-        ctx, users_file: str, posts_file: str, first: int, last: int, created_after: date,
-        posts: bool, replies: bool
+    ctx,
+    users_file: str,
+    posts_file: str,
+    first: int,
+    last: int,
+    created_after: date,
+    posts: bool,
+    replies: bool,
 ):
     """Pull users and (optionally) posts from Gab."""
 
@@ -323,14 +370,19 @@ def posts(
         ) as pbar:
             # Submit initial work
             futures = deque(
-                ex.submit(client.pull_user_and_posts, user_id, posts, created_after, replies)
+                ex.submit(
+                    client.pull_user_and_posts, user_id, posts, created_after, replies
+                )
                 for user_id in islice(users, client.threads * 2)
             )
 
             while futures:
                 pbar.update(1)
                 try:
-                    (user, found_posts) = futures.popleft().result() # Waits until complete
+                    (
+                        user,
+                        found_posts,
+                    ) = futures.popleft().result()  # Waits until complete
 
                     if user is not None:
                         print(json.dumps(user), file=user_file)
@@ -342,10 +394,81 @@ def posts(
 
                 # Schedule more work, if available
                 try:
-                    ex.submit(client.pull_user_and_posts, next(users), posts, created_after, replies)
+                    ex.submit(
+                        client.pull_user_and_posts,
+                        next(users),
+                        posts,
+                        created_after,
+                        replies,
+                    )
                 except StopIteration:
                     # No more unscheduled users to process
                     pass
+
+
+@cli.command("groups")
+@click.option(
+    "--groups-file",
+    default="gab_groups.jsonl",
+    help="Where to output the groups file to.",
+)
+@click.option(
+    "--posts-file",
+    default="gab_posts.jsonl",
+    help="Where to output the posts file to.",
+)
+@click.option("--first", default=0, help="The first group ID to pull.", type=int)
+@click.option("--last", default=70000, help="The last group ID to pull.", type=int)
+# @click.option("--created-after", default=None, help="Only pull posts created on or after the specified date, e.g. 2021-10-02 (defaults to none).",
+#               type=date.fromisoformat)
+@click.option("--posts/--no-posts", default=False, help="Pull posts.")
+@click.pass_context
+def groups(ctx, groups_file: str, posts_file: str, first: int, last: int, posts: bool):
+    """Pull groups and (optionally) their posts from Gab."""
+
+    client: Client = ctx.obj["client"]
+
+    if posts and (not client.username or not client.password):
+        raise ValueError("To pull data you must provide a Gab username and password!")
+
+    if last is None:
+        last = client.find_latest_user()["id"]
+
+    groups = iter(range(first, int(last) + 1))
+
+    with open(groups_file, "w") as groups_file, open(posts_file, "w") as posts_file:
+        with ThreadPoolExecutor(max_workers=client.threads) as ex, tqdm(
+            total=int(last) + 1 - first
+        ) as pbar:
+            # Submit initial work
+            futures = deque(
+                ex.submit(client.pull_group_and_posts, user_id, posts)
+                for user_id in islice(groups, client.threads * 2)
+            )
+
+            while futures:
+                pbar.update(1)
+                try:
+                    (
+                        group,
+                        found_posts,
+                    ) = futures.popleft().result()  # Waits until complete
+
+                    if group is not None:
+                        print(json.dumps(group), file=groups_file)
+                        for post in found_posts:
+                            print(json.dumps(post), file=posts_file)
+                except Exception as e:
+                    logger.warning(f"Encountered exception in thread pool: {str(e)}")
+                    raise e
+
+                # Schedule more work, if available
+                try:
+                    ex.submit(client.pull_group_and_posts, next(groups), posts)
+                except StopIteration:
+                    # No more unscheduled users to process
+                    pass
+
 
 if __name__ == "__main__":
     cli(obj={})
