@@ -19,6 +19,7 @@ from ratelimit import limits, sleep_and_retry
 # Setup loggers
 logger.remove()
 
+REQUESTS_PER_SESSION_REFRESH = 1000
 
 def write_tqdm(*args, **kwargs):
     return tqdm.write(*args, end="", **kwargs)
@@ -42,13 +43,14 @@ class Client:
         self.username = username
         self.password = password
         self.threads = threads
+        self._requests_since_refresh = 0
         if username and password:
             self.sess_cookie = self.get_sess_cookie(username, password)
 
     # Rate-limited _get function
     @sleep_and_retry
     @limits(calls=10, period=1)
-    def _get(self, *args, **kwargs):
+    def _get(self, *args, skip_sess_refresh=False, **kwargs):
         """Wrapper for requests.get(), except it supports retries."""
 
         s = requests.Session()
@@ -57,6 +59,14 @@ class Client:
         s.mount("https://", HTTPAdapter(max_retries=retries))
 
         response = s.get(*args, proxies=proxies, headers=headers, timeout=5, **kwargs)
+
+        if not skip_sess_refresh:
+            self._requests_since_refresh += 1
+            if self._requests_since_refresh > REQUESTS_PER_SESSION_REFRESH:
+                logger.info(f"Refreshing session... {self._requests_since_refresh} requests since last refresh...")
+                self.sess_cookie = self.get_sess_cookie(self.username, self.password)
+                self._requests_since_refresh = 0
+
         return response
 
     def pull_user(self, id: int) -> dict:
@@ -263,7 +273,7 @@ class Client:
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
         try:
-            login_req = self._get(url)
+            login_req = self._get(url, skip_sess_refresh=True)
             login_req.raise_for_status()
 
             login_page = BeautifulSoup(login_req.text, "html.parser")
