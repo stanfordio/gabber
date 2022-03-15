@@ -394,13 +394,13 @@ def posts(
 
                 # Schedule more work, if available
                 try:
-                    ex.submit(
+                    futures.append(ex.submit(
                         client.pull_user_and_posts,
                         next(users),
                         posts,
                         created_after,
                         replies,
-                    )
+                    ))
                 except StopIteration:
                     # No more unscheduled users to process
                     pass
@@ -419,8 +419,6 @@ def posts(
 )
 @click.option("--first", default=0, help="The first group ID to pull.", type=int)
 @click.option("--last", default=70000, help="The last group ID to pull.", type=int)
-# @click.option("--created-after", default=None, help="Only pull posts created on or after the specified date, e.g. 2021-10-02 (defaults to none).",
-#               type=date.fromisoformat)
 @click.option("--posts/--no-posts", default=False, help="Pull posts.")
 @click.pass_context
 def groups(ctx, groups_file: str, posts_file: str, first: int, last: int, posts: bool):
@@ -429,10 +427,7 @@ def groups(ctx, groups_file: str, posts_file: str, first: int, last: int, posts:
     client: Client = ctx.obj["client"]
 
     if posts and (not client.username or not client.password):
-        raise ValueError("To pull data you must provide a Gab username and password!")
-
-    if last is None:
-        last = client.find_latest_user()["id"]
+        raise ValueError("To pull posts you must provide a Gab username and password!")
 
     groups = iter(range(first, int(last) + 1))
 
@@ -442,8 +437,8 @@ def groups(ctx, groups_file: str, posts_file: str, first: int, last: int, posts:
         ) as pbar:
             # Submit initial work
             futures = deque(
-                ex.submit(client.pull_group_and_posts, user_id, posts)
-                for user_id in islice(groups, client.threads * 2)
+                ex.submit(client.pull_group_and_posts, group, posts)
+                for group in islice(groups, client.threads * 2)
             )
 
             while futures:
@@ -464,10 +459,10 @@ def groups(ctx, groups_file: str, posts_file: str, first: int, last: int, posts:
 
                 # Schedule more work, if available
                 try:
-                    ex.submit(client.pull_group_and_posts, next(groups), posts)
+                    futures.append(ex.submit(client.pull_group_and_posts, next(groups), posts))
                 except StopIteration:
-                    # No more unscheduled users to process
-                    pass
+                    # No more unscheduled groups to process
+                    logger.info("No more groups to process!")
 
 
 if __name__ == "__main__":
