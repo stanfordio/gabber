@@ -59,6 +59,7 @@ class Client:
         s.mount("https://", HTTPAdapter(max_retries=retries))
 
         response = s.get(*args, proxies=proxies, headers=headers, timeout=30, **kwargs)
+        logger.info(f"GET: {response.url}")
 
         if not skip_sess_refresh:
             self._requests_since_refresh += 1
