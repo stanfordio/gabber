@@ -4,13 +4,30 @@ Simple tool to pull posts and users from Gab.
 ## Usage
 
 ```text
-Usage: gabber [OPTIONS]
+Usage: gabber [OPTIONS] COMMAND [ARGS]...
+
+Options:
+  --user TEXT        Username to gab.com account. Required to pull posts. If
+                     unspecified, uses GAB_USER environment variable.
+  --password TEXT    Password to gab.com account. Required to pull posts. If
+                     unspecified, uses GAB_PASS environment variable.
+  --threads INTEGER  Number of threads to use in the pull (if unspecified,
+                     defaults to 25).
+  --help             Show this message and exit.
+
+Commands:
+  groups  Pull groups and (optionally) their posts from Gab.
+  posts   Pull users and (optionally) posts from Gab.
+```
+
+#### `posts`
+
+```text
+Usage: gabber posts [OPTIONS]
 
   Pull users and (optionally) posts from Gab.
 
 Options:
-  --threads INTEGER              Number of threads to use in the pull (if
-                                 unspecified, defaults to 25).
   --users-file TEXT              Where to output the user file to.
   --posts-file TEXT              Where to output the posts file to.
   --first INTEGER                The first user ID to pull.
@@ -21,13 +38,23 @@ Options:
   --posts / --no-posts           Pull posts (WIP; defaults to no posts).
   --replies / --no-replies       Include replies when pulling posts (defaults
                                  to no replies)
-  --user TEXT                    Username to gab.com account. Required to pull
-                                 posts. If unspecified, uses GAB_USER
-                                 environment variable.
-  --password TEXT                Password to gab.com account. Required to pull
-                                 posts. If unspecified, uses GAB_PASS
-                                 environment variable.
   --help                         Show this message and exit.
+```
+
+#### `groups`
+
+```text
+Usage: gabber groups [OPTIONS]
+
+  Pull groups and (optionally) their posts from Gab.
+
+Options:
+  --groups-file TEXT    Where to output the groups file to.
+  --posts-file TEXT     Where to output the posts file to.
+  --first INTEGER       The first group ID to pull.
+  --last INTEGER        The last group ID to pull.
+  --posts / --no-posts  Pull posts.
+  --help                Show this message and exit.
 ```
 
 ## Environment Variables

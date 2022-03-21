@@ -21,6 +21,7 @@ logger.remove()
 
 REQUESTS_PER_SESSION_REFRESH = 1000
 
+
 def write_tqdm(*args, **kwargs):
     return tqdm.write(*args, end="", **kwargs)
 
@@ -64,7 +65,9 @@ class Client:
         if not skip_sess_refresh:
             self._requests_since_refresh += 1
             if self._requests_since_refresh > REQUESTS_PER_SESSION_REFRESH:
-                logger.info(f"Refreshing session... {self._requests_since_refresh} requests since last refresh...")
+                logger.info(
+                    f"Refreshing session... {self._requests_since_refresh} requests since last refresh..."
+                )
                 self.sess_cookie = self.get_sess_cookie(self.username, self.password)
                 self._requests_since_refresh = 0
 
@@ -405,13 +408,15 @@ def posts(
 
                 # Schedule more work, if available
                 try:
-                    futures.append(ex.submit(
-                        client.pull_user_and_posts,
-                        next(users),
-                        posts,
-                        created_after,
-                        replies,
-                    ))
+                    futures.append(
+                        ex.submit(
+                            client.pull_user_and_posts,
+                            next(users),
+                            posts,
+                            created_after,
+                            replies,
+                        )
+                    )
                 except StopIteration:
                     # No more unscheduled users to process
                     pass
@@ -470,11 +475,17 @@ def groups(ctx, groups_file: str, posts_file: str, first: int, last: int, posts:
 
                 # Schedule more work, if available
                 try:
-                    futures.append(ex.submit(client.pull_group_and_posts, next(groups), posts))
+                    futures.append(
+                        ex.submit(client.pull_group_and_posts, next(groups), posts)
+                    )
                 except StopIteration:
                     # No more unscheduled groups to process
                     logger.info("No more groups to process!")
 
 
-if __name__ == "__main__":
+def cli_entrypoint():
     cli(obj={})
+
+
+if __name__ == "__main__":
+    cli_entrypoint()
