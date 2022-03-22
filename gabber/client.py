@@ -55,7 +55,9 @@ class Client:
         """Wrapper for requests.get(), except it supports retries."""
 
         s = requests.Session()
-        retries = Retry(total=10, backoff_factor=0.5, status_forcelist=[413, 429, 503, 403, 500])
+        retries = Retry(
+            total=10, backoff_factor=0.5, status_forcelist=[413, 429, 503, 403, 500]
+        )
         s.mount("http://", HTTPAdapter(max_retries=retries))
         s.mount("https://", HTTPAdapter(max_retries=retries))
 
@@ -111,11 +113,11 @@ class Client:
         result["_pulled"] = datetime.now().isoformat()
         return result
 
-    def pull_group_posts(self, id: int) -> Iterable[dict]:
+    def pull_group_posts(self, id: int, depth: int) -> Iterable[dict]:
         """Pull the given group's posts from Gab."""
 
         page = 1
-        while True:
+        while page <= depth:
             try:
                 results = self._get(
                     GAB_API_BASE_URL + f"/timelines/group/{id}",
@@ -144,12 +146,12 @@ class Client:
                 yield result
             page += 1
 
-    def pull_group_and_posts(self, id: int, pull_posts: bool) -> dict:
+    def pull_group_and_posts(self, id: int, pull_posts: bool, depth: int) -> dict:
         """Pull both a group and their its from Gab. Returns a tuple of (group, posts). Posts is an empty list if the group is not found (i.e., None)."""
 
         group = self.pull_group(id)
         posts = list(
-            self.pull_group_posts(id) if group is not None and pull_posts else []
+            self.pull_group_posts(id, depth) if group is not None and pull_posts else []
         )
 
         if group is None:
@@ -435,9 +437,20 @@ def posts(
 )
 @click.option("--first", default=0, help="The first group ID to pull.", type=int)
 @click.option("--last", default=70000, help="The last group ID to pull.", type=int)
+@click.option(
+    "--depth", default=10000, help="How many pages of posts to retrieve.", type=int
+)
 @click.option("--posts/--no-posts", default=False, help="Pull posts.")
 @click.pass_context
-def groups(ctx, groups_file: str, posts_file: str, first: int, last: int, posts: bool):
+def groups(
+    ctx,
+    groups_file: str,
+    posts_file: str,
+    first: int,
+    last: int,
+    depth: int,
+    posts: bool,
+):
     """Pull groups and (optionally) their posts from Gab."""
 
     client: Client = ctx.obj["client"]
@@ -453,7 +466,7 @@ def groups(ctx, groups_file: str, posts_file: str, first: int, last: int, posts:
         ) as pbar:
             # Submit initial work
             futures = deque(
-                ex.submit(client.pull_group_and_posts, group, posts)
+                ex.submit(client.pull_group_and_posts, group, posts, depth)
                 for group in islice(groups, client.threads * 2)
             )
 
@@ -476,7 +489,9 @@ def groups(ctx, groups_file: str, posts_file: str, first: int, last: int, posts:
                 # Schedule more work, if available
                 try:
                     futures.append(
-                        ex.submit(client.pull_group_and_posts, next(groups), posts)
+                        ex.submit(
+                            client.pull_group_and_posts, next(groups), posts, depth
+                        )
                     )
                 except StopIteration:
                     # No more unscheduled groups to process
