@@ -9,6 +9,7 @@ from requests.sessions import HTTPAdapter
 from tqdm import tqdm
 from typing import Iterable, Iterator, List
 from urllib3 import Retry
+from concurrent import futures
 import random
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -39,6 +40,14 @@ GAB_BASE_URL = "https://gab.com"
 GAB_API_BASE_URL = "https://gab.com/api/v1"
 
 
+def await_any(items: List[futures.Future], pop=True):
+    done, _not_done = futures.wait(items, return_when=futures.FIRST_COMPLETED)
+    if pop:
+        for item in done:
+            items.remove(item)
+    return done
+
+
 class Client:
     def __init__(self, username: str, password: str, threads: int):
         self.username = username
@@ -55,7 +64,9 @@ class Client:
         """Wrapper for requests.get(), except it supports retries."""
 
         s = requests.Session()
-        retries = Retry(total=10, backoff_factor=0.5, status_forcelist=[413, 429, 503, 403, 500])
+        retries = Retry(
+            total=10, backoff_factor=0.5, status_forcelist=[413, 429, 503, 403, 500]
+        )
         s.mount("http://", HTTPAdapter(max_retries=retries))
         s.mount("https://", HTTPAdapter(max_retries=retries))
 
@@ -383,40 +394,42 @@ def posts(
             total=int(last) + 1 - first
         ) as pbar:
             # Submit initial work
-            futures = deque(
+            f = list(
                 ex.submit(
                     client.pull_user_and_posts, user_id, posts, created_after, replies
                 )
                 for user_id in islice(users, client.threads * 2)
             )
 
-            while futures:
+            while len(f) > 0:
                 pbar.update(1)
                 try:
-                    (
-                        user,
-                        found_posts,
-                    ) = futures.popleft().result()  # Waits until complete
+                    done = await_any(f)
+                    for completed in done:
+                        (user, found_posts,) = completed.result(
+                            0
+                        )  # Waits until complete
 
-                    if user is not None:
-                        print(json.dumps(user), file=user_file)
-                        for post in found_posts:
-                            print(json.dumps(post), file=posts_file)
+                        if user is not None:
+                            print(json.dumps(user), file=user_file)
+                            for post in found_posts:
+                                print(json.dumps(post), file=posts_file)
                 except Exception as e:
                     logger.warning(f"Encountered exception in thread pool: {str(e)}")
                     raise e
 
                 # Schedule more work, if available
                 try:
-                    futures.append(
-                        ex.submit(
-                            client.pull_user_and_posts,
-                            next(users),
-                            posts,
-                            created_after,
-                            replies,
+                    for _ in range(len(done)):
+                        f.append(
+                            ex.submit(
+                                client.pull_user_and_posts,
+                                next(users),
+                                posts,
+                                created_after,
+                                replies,
+                            )
                         )
-                    )
                 except StopIteration:
                     # No more unscheduled users to process
                     pass
@@ -452,32 +465,34 @@ def groups(ctx, groups_file: str, posts_file: str, first: int, last: int, posts:
             total=int(last) + 1 - first
         ) as pbar:
             # Submit initial work
-            futures = deque(
+            f = deque(
                 ex.submit(client.pull_group_and_posts, group, posts)
                 for group in islice(groups, client.threads * 2)
             )
 
-            while futures:
+            while len(f) > 0:
                 pbar.update(1)
                 try:
-                    (
-                        group,
-                        found_posts,
-                    ) = futures.popleft().result()  # Waits until complete
+                    done = await_any(f)
+                    for completed in done:
+                        (group, found_posts,) = completed.result(
+                            0
+                        )  # Waits until complete
 
-                    if group is not None:
-                        print(json.dumps(group), file=groups_file)
-                        for post in found_posts:
-                            print(json.dumps(post), file=posts_file)
+                        if group is not None:
+                            print(json.dumps(group), file=groups_file)
+                            for post in found_posts:
+                                print(json.dumps(post), file=posts_file)
                 except Exception as e:
                     logger.warning(f"Encountered exception in thread pool: {str(e)}")
                     raise e
 
                 # Schedule more work, if available
                 try:
-                    futures.append(
-                        ex.submit(client.pull_group_and_posts, next(groups), posts)
-                    )
+                    for _ in range(len(done)):
+                        futures.append(
+                            ex.submit(client.pull_group_and_posts, next(groups), posts)
+                        )
                 except StopIteration:
                     # No more unscheduled groups to process
                     logger.info("No more groups to process!")
