@@ -17,13 +17,13 @@ Options:
 
 Commands:
   groups  Pull groups and (optionally) their posts from Gab.
-  posts   Pull users and (optionally) posts from Gab.
+  users   Pull users and (optionally) posts from Gab.
 ```
 
-#### `posts`
+#### `users`
 
 ```text
-Usage: gabber posts [OPTIONS]
+Usage: gabber users [OPTIONS]
 
   Pull users and (optionally) posts from Gab.
 

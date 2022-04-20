@@ -20,7 +20,7 @@ from ratelimit import limits, sleep_and_retry
 # Setup loggers
 logger.remove()
 
-REQUESTS_PER_SESSION_REFRESH = 1000
+REQUESTS_PER_SESSION_REFRESH = 5000
 
 
 def write_tqdm(*args, **kwargs):
@@ -59,7 +59,7 @@ class Client:
 
     # Rate-limited _get function
     @sleep_and_retry
-    @limits(calls=10, period=1)
+    @limits(calls=100, period=1)
     def _get(self, *args, skip_sess_refresh=False, **kwargs):
         """Wrapper for requests.get(), except it supports retries."""
 
@@ -87,20 +87,36 @@ class Client:
     def pull_user(self, id: int) -> dict:
         """Pull the given user's information from Gab. Returns None if not found."""
 
+        result = {
+            "_pulled": datetime.now().isoformat(),
+            "id": str(id) # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
+        }
+
         logger.info(f"Pulling user #{id}...")
         try:
-            result = self._get(GAB_API_BASE_URL + f"/accounts/{id}").json()
+            resp = self._get(GAB_API_BASE_URL + f"/accounts/{id}")
+            result.update(_status_code = resp.status_code)
+
+            if resp.status_code != 200:
+                logger.warning(f"Pulling user #{id} had non-200 status code ({resp.status_code})")
+                result.update(**{
+                    "_available": False,
+                })
+                return result
+
+            result.update(_available=True, **resp.json())
         except json.JSONDecodeError as e:
-            logger.error(f"Unable to pull user #{id}: {str(e)}")
-            return None
+            logger.error(f"JSON error #{id}: {str(e)}")
+            result.update(_error={str(e)})
+            return result
         except Exception as e:
-            logger.error(f"Misc. error while pulling user {id}: {e}")
-            return None
+            logger.error(f"Misc. error while pulling user {id}: {str(e)}")
+            result.update(_error={str(e)})
+            return result
 
         if result.get("error") == "Record not found":
-            return None
+            result.update(_available=False, _error=result.get("error"))
 
-        result["_pulled"] = datetime.now().isoformat()
         return result
 
     def pull_group(self, id: int) -> dict:
@@ -172,7 +188,14 @@ class Client:
 
         return (group, posts)
 
-    def pull_statuses(self, id: int, created_after: date, replies: bool) -> List[dict]:
+    def pull_statuses(
+        self,
+        id: int,
+        created_after: date,
+        replies: bool,
+        expected_count: int = None,
+        retries_remaining: int = 3,
+    ) -> List[dict]:
         """Pull the given user's statuses from Gab. Returns an empty list if not found."""
 
         params = {}
@@ -222,6 +245,22 @@ class Client:
 
                 all_posts.append(post)
 
+        if expected_count is not None and retries_remaining > 0:
+            # If we have everything we expect *within a threshold of 0.95*, we're good to go!
+            if expected_count == 0 or (len(all_posts) / expected_count) > 0.95:
+                return all_posts
+
+            logger.warning(
+                f"Expected {expected_count} statuses from #{id} but only found {len(all_posts)} — retrying ({retries_remaining - 1} further retries remaining)"
+            )
+            return self.pull_statuses(
+                id,
+                created_after,
+                replies,
+                expected_count=expected_count,
+                retries_remaining=retries_remaining - 1,
+            )
+
         return all_posts
 
     def pull_user_and_posts(
@@ -230,18 +269,28 @@ class Client:
         """Pull both a user and their posts from Gab. Returns a tuple of (user, posts). Posts is an empty list if the user is not found (i.e., None)."""
 
         user = self.pull_user(id)
+
         posts = (
-            self.pull_statuses(id, created_after, replies)
-            if user is not None and pull_posts
+            self.pull_statuses(
+                id,
+                created_after,
+                replies,
+                expected_count=user.get("statuses_count") if user is not None else None,
+            )
+            if user.get("_available") and pull_posts
             else []
         )
 
-        if user is None:
+        if user is None or not user.get("_available", False):
             logger.info(f"User #{id} does not exist.")
         else:
             logger.info(
-                f"Pulled {len(posts)} posts from user #{id} (@{user['username']})."
+                f"Pulled {len(posts)} (Gab claims {user.get('statuses_count')}) posts from user #{id} (@{user['username']})."
             )
+            if user.get("statuses_count") < len(posts):
+                logger.warning(
+                    f"Pulled posts for user #{id} does not match Gab's claim! (We have {len(posts)}, but Gab says this user has {user.get('statuses_count')} statuses.)"
+                )
 
         return (user, posts)
 
@@ -339,7 +388,7 @@ def cli(ctx, user, password, threads):
     ctx.obj["client"] = Client(user, password, threads)
 
 
-@cli.command("posts")
+@cli.command("users")
 @click.option(
     "--users-file",
     default="gab_users.jsonl",
@@ -367,7 +416,7 @@ def cli(ctx, user, password, threads):
     help="Include replies when pulling posts (defaults to no replies)",
 )
 @click.pass_context
-def posts(
+def users(
     ctx,
     users_file: str,
     posts_file: str,
@@ -411,9 +460,11 @@ def posts(
                         )  # Waits until complete
 
                         if user is not None:
-                            print(json.dumps(user), file=user_file)
+                            print(json.dumps(user), file=user_file, flush=True)
                             for post in found_posts:
-                                print(json.dumps(post), file=posts_file)
+                                print(json.dumps(post), file=posts_file, flush=True)
+
+                            logger.info(f"Wrote user #{user['id']} to disk...")
                 except Exception as e:
                     logger.warning(f"Encountered exception in thread pool: {str(e)}")
                     raise e
