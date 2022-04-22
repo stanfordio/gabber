@@ -24,7 +24,7 @@ REQUESTS_PER_SESSION_REFRESH = 5000
 
 def json_set_default(obj):
     logger.warning("Unable to fully serialize JSON data!")
-    return "[unserializable]"
+    return f"[unserializable: {str(obj)}]"
 
 def write_tqdm(*args, **kwargs):
     return tqdm.write(*args, end="", **kwargs)
