@@ -22,6 +22,9 @@ logger.remove()
 
 REQUESTS_PER_SESSION_REFRESH = 5000
 
+def json_set_default(obj):
+    logger.warning("Unable to fully serialize JSON data!")
+    return "[unserializable]"
 
 def write_tqdm(*args, **kwargs):
     return tqdm.write(*args, end="", **kwargs)
@@ -460,9 +463,9 @@ def users(
                         )  # Waits until complete
 
                         if user is not None:
-                            print(json.dumps(user), file=user_file, flush=True)
+                            print(json.dumps(user), file=user_file, flush=True, default=json_set_default)
                             for post in found_posts:
-                                print(json.dumps(post), file=posts_file, flush=True)
+                                print(json.dumps(post), file=posts_file, flush=True, default=json_set_default)
 
                             logger.info(f"Wrote user #{user['id']} to disk...")
                 except Exception as e:
