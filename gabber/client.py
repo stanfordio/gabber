@@ -463,9 +463,9 @@ def users(
                         )  # Waits until complete
 
                         if user is not None:
-                            print(json.dumps(user), file=user_file, flush=True, default=json_set_default)
+                            print(json.dumps(user, default=json_set_default), file=user_file, flush=True)
                             for post in found_posts:
-                                print(json.dumps(post), file=posts_file, flush=True, default=json_set_default)
+                                print(json.dumps(post, default=json_set_default), file=posts_file, flush=True)
 
                             logger.info(f"Wrote user #{user['id']} to disk...")
                 except Exception as e:
