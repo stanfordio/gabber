@@ -53,6 +53,7 @@ Options:
   --posts-file TEXT     Where to output the posts file to.
   --first INTEGER       The first group ID to pull.
   --last INTEGER        The last group ID to pull.
+  --depth INTEGER       How many pages of posts to retrieve.
   --posts / --no-posts  Pull posts.
   --help                Show this message and exit.
 ```
@@ -61,6 +62,8 @@ Options:
 
 * `HTTP_PROXY` — route all traffic through this HTTP proxy (highly recommended given Gab's rate limiting)
 * `HTTPS_PROXY` — route all traffic through this HTTPS proxy (highly recommended given Gab's rate limiting)
+* `GAB_USER` — the (optional) username to authenticate as with Gab
+* `GAB_PASS` — the (optional) password to use while authenticating with Gab
 
 ## Development
 
