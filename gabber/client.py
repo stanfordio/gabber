@@ -545,9 +545,9 @@ def groups(
                         )  # Waits until complete
 
                         if group is not None:
-                            print(json.dumps(group), file=groups_file)
+                            print(json.dumps(group, default=json_set_default), file=groups_file, flush=True)
                             for post in found_posts:
-                                print(json.dumps(post), file=posts_file)
+                                print(json.dumps(post, default=json_set_default), file=posts_file, flush=True)
                 except Exception as e:
                     logger.warning(f"Encountered exception in thread pool: {str(e)}")
                     raise e
@@ -555,7 +555,7 @@ def groups(
                 # Schedule more work, if available
                 try:
                     for _ in range(len(done)):
-                        futures.append(
+                        f.append(
                             ex.submit(
                                 client.pull_group_and_posts, next(groups), posts, depth
                             )
