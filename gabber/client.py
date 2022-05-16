@@ -125,20 +125,36 @@ class Client:
     def pull_group(self, id: int) -> dict:
         """Pull the given group's information from Gab. Returns None if not found."""
 
+        result = {
+            "_pulled": datetime.now().isoformat(),
+            "id": str(id) # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
+        }
+
         logger.info(f"Pulling group #{id}...")
         try:
-            result = self._get(GAB_API_BASE_URL + f"/groups/{id}").json()
+            resp = self._get(GAB_API_BASE_URL + f"/groups/{id}")
+            result.update(_status_code=resp.status_code)
+
+            if resp.status_code != 200:
+                logger.warning(f"Pulling group #{id} had non-200 status code ({resp.status_code})")
+                result.update(**{
+                    "_available": False,
+                })
+                return result
+            
+            result.update(_available=True, **resp.json())
         except json.JSONDecodeError as e:
-            logger.error(f"Unable to pull group #{id}: {str(e)}")
-            return None
+            logger.error(f"JSON error #{id}: {str(e)}")
+            result.update(_error={str(e)})
+            return result
         except Exception as e:
-            logger.error(f"Misc. error while pulling group #{id}: {e}")
-            return None
+            logger.error(f"Misc. error while pulling group {id}: {str(e)}")
+            result.update(_error={str(e)})
+            return result
 
         if result.get("error") == "Record not found":
-            return None
+            result.update(_available=False, _error=result.get("error"))
 
-        result["_pulled"] = datetime.now().isoformat()
         return result
 
     def pull_group_posts(self, id: int, depth: int) -> Iterable[dict]:
@@ -186,7 +202,7 @@ class Client:
             logger.info(f"Group #{id} does not exist.")
         else:
             logger.info(
-                f"Pulled {len(posts)} posts from group #{id} ({group['title']})."
+                f"Pulled {len(posts)} posts from group #{id}."
             )
 
         return (group, posts)
@@ -530,7 +546,7 @@ def groups(
             total=int(last) + 1 - first
         ) as pbar:
             # Submit initial work
-            f = list(
+            f = list( # Right now, this list will just grow to infinity as work is completed. In theory we could pop once we finish processing a group.
                 ex.submit(client.pull_group_and_posts, group, posts, depth)
                 for group in islice(groups, client.threads * 2)
             )
@@ -548,6 +564,8 @@ def groups(
                             print(json.dumps(group, default=json_set_default), file=groups_file, flush=True)
                             for post in found_posts:
                                 print(json.dumps(post, default=json_set_default), file=posts_file, flush=True)
+
+                        logger.info(f"Wrote group #{group['id']} to disk...")
                 except Exception as e:
                     logger.warning(f"Encountered exception in thread pool: {str(e)}")
                     raise e
