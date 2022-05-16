@@ -195,10 +195,10 @@ class Client:
 
         group = self.pull_group(id)
         posts = list(
-            self.pull_group_posts(id, depth) if group is not None and pull_posts else []
+            self.pull_group_posts(id, depth) if group.get("_available", False) and pull_posts and pull_posts else []
         )
 
-        if group is None:
+        if group is None or group.get("_available", False):
             logger.info(f"Group #{id} does not exist.")
         else:
             logger.info(
