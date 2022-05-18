@@ -1,5 +1,6 @@
 from collections import deque
 import os
+from time import sleep
 import click
 import requests
 from itertools import islice
@@ -22,9 +23,11 @@ logger.remove()
 
 REQUESTS_PER_SESSION_REFRESH = 5000
 
+
 def json_set_default(obj):
     logger.warning("Unable to fully serialize JSON data!")
     return f"[unserializable: {str(obj)}]"
+
 
 def write_tqdm(*args, **kwargs):
     return tqdm.write(*args, end="", **kwargs)
@@ -68,7 +71,9 @@ class Client:
 
         s = requests.Session()
         retries = Retry(
-            total=10, backoff_factor=0.5, status_forcelist=[413, 429, 503, 403, 500]
+            total=10,
+            backoff_factor=0.5,
+            status_forcelist=[413, 429, 503, 403, 500, 502, 523, 520],
         )
         s.mount("http://", HTTPAdapter(max_retries=retries))
         s.mount("https://", HTTPAdapter(max_retries=retries))
@@ -92,19 +97,25 @@ class Client:
 
         result = {
             "_pulled": datetime.now().isoformat(),
-            "id": str(id) # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
+            "id": str(
+                id
+            ),  # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
         }
 
         logger.info(f"Pulling user #{id}...")
         try:
             resp = self._get(GAB_API_BASE_URL + f"/accounts/{id}")
-            result.update(_status_code = resp.status_code)
+            result.update(_status_code=resp.status_code)
 
             if resp.status_code != 200:
-                logger.warning(f"Pulling user #{id} had non-200 status code ({resp.status_code})")
-                result.update(**{
-                    "_available": False,
-                })
+                logger.warning(
+                    f"Pulling user #{id} had non-200 status code ({resp.status_code})"
+                )
+                result.update(
+                    **{
+                        "_available": False,
+                    }
+                )
                 return result
 
             result.update(_available=True, **resp.json())
@@ -127,7 +138,9 @@ class Client:
 
         result = {
             "_pulled": datetime.now().isoformat(),
-            "id": str(id) # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
+            "id": str(
+                id
+            ),  # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
         }
 
         logger.info(f"Pulling group #{id}...")
@@ -136,12 +149,16 @@ class Client:
             result.update(_status_code=resp.status_code)
 
             if resp.status_code != 200:
-                logger.warning(f"Pulling group #{id} had non-200 status code ({resp.status_code})")
-                result.update(**{
-                    "_available": False,
-                })
+                logger.warning(
+                    f"Pulling group #{id} had non-200 status code ({resp.status_code})"
+                )
+                result.update(
+                    **{
+                        "_available": False,
+                    }
+                )
                 return result
-            
+
             result.update(_available=True, **resp.json())
         except json.JSONDecodeError as e:
             logger.error(f"JSON error #{id}: {str(e)}")
@@ -161,7 +178,13 @@ class Client:
         """Pull the given group's posts from Gab."""
 
         page = 1
-        while page <= depth:
+        # If we hit any kind of error, we increment this and try to pull the page again.
+        tries_since_failure = 0
+
+        while page <= depth and tries_since_failure < 5:
+            if tries_since_failure > 0:
+                logger.info("Retrying after 30 seconds...")
+                sleep(30)
             try:
                 results = self._get(
                     GAB_API_BASE_URL + f"/timelines/group/{id}",
@@ -172,22 +195,33 @@ class Client:
                     cookies=self.sess_cookie,
                 ).json()
             except json.JSONDecodeError as e:
-                logger.error(f"Unable to pull group #{id}'s statuses: {e}")
-                break
+                logger.error(
+                    f"Unable to pull group #{id}'s statuses, potentially retrying: {e}"
+                )
+                tries_since_failure += 1
+                continue
             except Exception as e:
-                logger.error(f"Misc. error while pulling statuses for group #{id}: {e}")
-                break
+                logger.error(
+                    f"Misc. error while pulling statuses for group #{id}, potentially retrying: {e}"
+                )
+                tries_since_failure += 1
+                continue
 
             if "error" in results:
                 logger.error(
-                    f"API returned an error while pulling group #{id}'s statuses: {results}"
+                    f"API returned an error while pulling group #{id}'s statuses, potentially retrying: {results}"
                 )
-                break
+                tries_since_failure += 1
+                continue
             if len(results) == 0:
+                # This is the only _good_ case
                 break
+
+            tries_since_failure = 0
             for result in results:
                 result["_pulled"] = datetime.now().isoformat()
                 yield result
+
             page += 1
 
     def pull_group_and_posts(self, id: int, pull_posts: bool, depth: int) -> dict:
@@ -195,15 +229,15 @@ class Client:
 
         group = self.pull_group(id)
         posts = list(
-            self.pull_group_posts(id, depth) if group.get("_available", False) and pull_posts and pull_posts else []
+            self.pull_group_posts(id, depth)
+            if group.get("_available", False) and pull_posts and pull_posts
+            else []
         )
 
         if group is None or group.get("_available", False):
             logger.info(f"Group #{id} does not exist.")
         else:
-            logger.info(
-                f"Pulled {len(posts)} posts from group #{id}."
-            )
+            logger.info(f"Pulled {len(posts)} posts from group #{id}.")
 
         return (group, posts)
 
@@ -479,9 +513,17 @@ def users(
                         )  # Waits until complete
 
                         if user is not None:
-                            print(json.dumps(user, default=json_set_default), file=user_file, flush=True)
+                            print(
+                                json.dumps(user, default=json_set_default),
+                                file=user_file,
+                                flush=True,
+                            )
                             for post in found_posts:
-                                print(json.dumps(post, default=json_set_default), file=posts_file, flush=True)
+                                print(
+                                    json.dumps(post, default=json_set_default),
+                                    file=posts_file,
+                                    flush=True,
+                                )
 
                             logger.info(f"Wrote user #{user['id']} to disk...")
                 except Exception as e:
@@ -546,7 +588,7 @@ def groups(
             total=int(last) + 1 - first
         ) as pbar:
             # Submit initial work
-            f = list( # Right now, this list will just grow to infinity as work is completed. In theory we could pop once we finish processing a group.
+            f = list(  # Right now, this list will just grow to infinity as work is completed. In theory we could pop once we finish processing a group.
                 ex.submit(client.pull_group_and_posts, group, posts, depth)
                 for group in islice(groups, client.threads * 2)
             )
@@ -561,9 +603,17 @@ def groups(
                         )  # Waits until complete
 
                         if group is not None:
-                            print(json.dumps(group, default=json_set_default), file=groups_file, flush=True)
+                            print(
+                                json.dumps(group, default=json_set_default),
+                                file=groups_file,
+                                flush=True,
+                            )
                             for post in found_posts:
-                                print(json.dumps(post, default=json_set_default), file=posts_file, flush=True)
+                                print(
+                                    json.dumps(post, default=json_set_default),
+                                    file=posts_file,
+                                    flush=True,
+                                )
 
                         logger.info(f"Wrote group #{group['id']} to disk...")
                 except Exception as e:
