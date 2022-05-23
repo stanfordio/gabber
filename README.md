@@ -46,7 +46,8 @@ Options:
 ```text
 Usage: gabber groups [OPTIONS]
 
-  Pull groups and (optionally) their posts from Gab.
+  Pull groups and (optionally) their posts from Gab. Can pull at most 250
+  pages of posts per group (5000 posts).
 
 Options:
   --groups-file TEXT    Where to output the groups file to.

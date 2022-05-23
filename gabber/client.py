@@ -234,7 +234,7 @@ class Client:
             else []
         )
 
-        if group is None or group.get("_available", False):
+        if group is None or not group.get("_available", False):
             logger.info(f"Group #{id} does not exist.")
         else:
             logger.info(f"Pulled {len(posts)} posts from group #{id}.")
@@ -574,7 +574,7 @@ def groups(
     depth: int,
     posts: bool,
 ):
-    """Pull groups and (optionally) their posts from Gab."""
+    """Pull groups and (optionally) their posts from Gab. Can pull at most 250 pages of posts per group (5000 posts)."""
 
     client: Client = ctx.obj["client"]
 
