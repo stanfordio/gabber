@@ -17,13 +17,13 @@ Options:
 
 Commands:
   groups  Pull groups and (optionally) their posts from Gab.
-  posts   Pull users and (optionally) posts from Gab.
+  users   Pull users and (optionally) posts from Gab.
 ```
 
-#### `posts`
+#### `users`
 
 ```text
-Usage: gabber posts [OPTIONS]
+Usage: gabber users [OPTIONS]
 
   Pull users and (optionally) posts from Gab.
 
@@ -46,13 +46,15 @@ Options:
 ```text
 Usage: gabber groups [OPTIONS]
 
-  Pull groups and (optionally) their posts from Gab.
+  Pull groups and (optionally) their posts from Gab. Can pull at most 250
+  pages of posts per group (5000 posts).
 
 Options:
   --groups-file TEXT    Where to output the groups file to.
   --posts-file TEXT     Where to output the posts file to.
   --first INTEGER       The first group ID to pull.
   --last INTEGER        The last group ID to pull.
+  --depth INTEGER       How many pages of posts to retrieve.
   --posts / --no-posts  Pull posts.
   --help                Show this message and exit.
 ```
@@ -61,6 +63,8 @@ Options:
 
 * `HTTP_PROXY` — route all traffic through this HTTP proxy (highly recommended given Gab's rate limiting)
 * `HTTPS_PROXY` — route all traffic through this HTTPS proxy (highly recommended given Gab's rate limiting)
+* `GAB_USER` — the (optional) username to authenticate as with Gab
+* `GAB_PASS` — the (optional) password to use while authenticating with Gab
 
 ## Development
 
