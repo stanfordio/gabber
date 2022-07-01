@@ -1,5 +1,6 @@
 from collections import deque
 import os
+import sys
 from time import sleep
 import click
 import requests
@@ -30,7 +31,7 @@ def json_set_default(obj):
 
 
 def write_tqdm(*args, **kwargs):
-    return tqdm.write(*args, end="", **kwargs)
+    return tqdm.write(*args, end="", **kwargs, file=sys.stderr)
 
 
 logger.add(write_tqdm)
@@ -43,7 +44,7 @@ headers = {
 
 # Constants
 GAB_BASE_URL = "https://gab.com"
-GAB_API_BASE_URL = "https://gab.com/api/v1"
+GAB_API_BASE_URL = "https://gab.com/api/"
 
 
 def await_any(items: List[futures.Future], pop=True):
@@ -104,7 +105,7 @@ class Client:
 
         logger.info(f"Pulling user #{id}...")
         try:
-            resp = self._get(GAB_API_BASE_URL + f"/accounts/{id}")
+            resp = self._get(GAB_API_BASE_URL + f"v1/accounts/{id}")
             result.update(_status_code=resp.status_code)
 
             if resp.status_code != 200:
@@ -145,7 +146,7 @@ class Client:
 
         logger.info(f"Pulling group #{id}...")
         try:
-            resp = self._get(GAB_API_BASE_URL + f"/groups/{id}")
+            resp = self._get(GAB_API_BASE_URL + f"v1/groups/{id}")
             result.update(_status_code=resp.status_code)
 
             if resp.status_code != 200:
@@ -187,7 +188,7 @@ class Client:
                 sleep(30)
             try:
                 results = self._get(
-                    GAB_API_BASE_URL + f"/timelines/group/{id}",
+                    GAB_API_BASE_URL + f"v1/timelines/group/{id}",
                     params={
                         "sort_by": "newest",
                         "page": page,
@@ -255,7 +256,7 @@ class Client:
         all_posts = []
         while True:
             try:
-                url = GAB_API_BASE_URL + f"/accounts/{id}/statuses"
+                url = GAB_API_BASE_URL + f"v1/accounts/{id}/statuses"
                 if not replies:
                     url += "?exclude_replies=true"
                 result = self._get(url, params=params, cookies=self.sess_cookie).json()
@@ -346,6 +347,43 @@ class Client:
                 )
 
         return (user, posts)
+
+    def search(self, query: str, depth: int):
+        all_results = []
+        page = 1
+
+        while page <= depth:
+            try:
+                result = self._get(
+                    GAB_API_BASE_URL + f"v3/search?q={query}",
+                    params={
+                        "onlyVerified": "false",
+                        "type": "status",
+                        "page": page,
+                    },
+                    cookies=self.sess_cookie,
+                ).json()
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Unable to pull search for {query} : {e}")
+                break
+            except Exception as e:
+                logger.error(f"Misc. error while searching for {query}: {e}")
+                break
+
+            if "error" in result:
+                logger.error(
+                    f"API returned an error while searching for {query}: {result}"
+                )
+                break
+
+            if len(result) == 0:
+                break
+
+            page += 1
+            all_results.append(result)
+
+        return all_results
 
     def find_latest_user(self) -> int:
         """Binary search to find the approximate latest user."""
@@ -631,6 +669,26 @@ def groups(
                 except StopIteration:
                     # No more unscheduled groups to process
                     logger.info("No more groups to process!")
+
+
+@cli.command("search")
+@click.option(
+    "--depth",
+    default=10,
+    help="How many pages of search results to retrieve.",
+    type=int,
+)
+@click.option("--query", help="The query to search for.", type=str)
+@click.pass_context
+def search(ctx, query: str, depth: int):
+    """Query the Search API."""
+
+    client: Client = ctx.obj["client"]
+
+    if not client.username or not client.password:
+        raise ValueError("To pull posts you must provide a Gab username and password!")
+
+    print(json.dumps(client.search(query, depth)))
 
 
 def cli_entrypoint():
