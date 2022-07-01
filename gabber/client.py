@@ -1,4 +1,3 @@
-from collections import deque
 import os
 import sys
 from time import sleep
@@ -12,7 +11,6 @@ from tqdm import tqdm
 from typing import Iterable, Iterator, List
 from urllib3 import Retry
 from concurrent import futures
-import random
 import json
 from concurrent.futures import ThreadPoolExecutor
 from bs4 import BeautifulSoup
