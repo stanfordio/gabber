@@ -35,8 +35,13 @@ def write_tqdm(*args, **kwargs):
 
 logger.add(write_tqdm)
 
+proxy_path = f'http://{os.getenv("PROXY_USER")}:{os.getenv("PROXY_PASS")}@{os.getenv("HTTP_PROXY")}'
+
 # Setup proxies
-proxies = {"http": os.getenv("HTTP_PROXY"), "https": os.getenv("HTTPS_PROXY")}
+proxies = {
+    "http": proxy_path,
+    "https": proxy_path,
+}
 headers = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
 }
@@ -77,7 +82,7 @@ class Client:
         )
         s.mount("http://", HTTPAdapter(max_retries=retries))
         s.mount("https://", HTTPAdapter(max_retries=retries))
-
+        logger.debug(f"About to make GET request.")
         response = s.get(*args, proxies=proxies, headers=headers, timeout=30, **kwargs)
         logger.info(f"GET: {response.url}")
 
@@ -427,6 +432,7 @@ class Client:
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
+        logger.info("Getting session cookie.")
         try:
             login_req = self._get(url, skip_sess_refresh=True)
             login_req.raise_for_status()
@@ -483,6 +489,9 @@ def cli(ctx, user, password, threads):
 @click.option("--id", help="User id from which to pull followers.", type=int)
 @click.pass_context
 def followers(ctx, id: int):
+    """
+    Pull followers from a Gab account.
+    """
     client: Client = ctx.obj["client"]
     if not client.username or not client.password:
         raise ValueError("To pull data you must provide a Gab username and password!")
