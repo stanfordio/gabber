@@ -34,8 +34,13 @@ def write_tqdm(*args, **kwargs):
 
 logger.add(write_tqdm)
 
+proxy_path = f'http://{os.getenv("PROXY_USER")}:{os.getenv("PROXY_PASS")}@{os.getenv("HTTP_PROXY")}'
+
 # Setup proxies
-proxies = {"http": os.getenv("HTTP_PROXY"), "https": os.getenv("HTTPS_PROXY")}
+proxies = {
+    "http": proxy_path,
+    "https": proxy_path,
+}
 headers = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
 }
@@ -76,7 +81,7 @@ class Client:
         )
         s.mount("http://", HTTPAdapter(max_retries=retries))
         s.mount("https://", HTTPAdapter(max_retries=retries))
-
+        logger.debug(f"About to make GET request.")
         response = s.get(*args, proxies=proxies, headers=headers, timeout=30, **kwargs)
         logger.info(f"GET: {response.url}")
 
@@ -421,10 +426,49 @@ class Client:
 
         return user
 
+    def pull_followers(self, id: int):
+        result = {
+            "_pulled": datetime.now().isoformat(),
+            "id": str(
+                id
+            ),  # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
+        }
+        logger.info(f"Pulling followers for user {id}.")
+        try:
+            resp = self._get(GAB_API_BASE_URL + f"v1/accounts/{id}/followers")
+            result.update(_status_code=resp.status_code)
+
+            if resp.status_code != 200:
+                logger.warning(
+                    f"Pulling followers for #{id} had non-200 status code ({resp.status_code})"
+                )
+                result.update(
+                    **{
+                        "_available": False,
+                    }
+                )
+                return result
+
+            result.update(_available=True, **resp.json())
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON error #{id}: {str(e)}")
+            result.update(_error={str(e)})
+            return result
+        except Exception as e:
+            logger.error(f"Misc. error while pulling user {id}: {str(e)}")
+            result.update(_error={str(e)})
+            return result
+
+        if result.get("error") == "Record not found":
+            result.update(_available=False, _error=result.get("error"))
+
+        return result
+
     # Adapted from https://github.com/ChrisStevens/garc
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
+        logger.info("Getting session cookie.")
         try:
             login_req = self._get(url, skip_sess_refresh=True)
             login_req.raise_for_status()
@@ -475,6 +519,22 @@ class Client:
 def cli(ctx, user, password, threads):
     ctx.ensure_object(dict)
     ctx.obj["client"] = Client(user, password, threads)
+
+
+@cli.command("followers")
+@click.option("--id", help="User id from which to pull followers.", type=int)
+@click.pass_context
+def followers(ctx, id: int):
+    """
+    Pull followers from a Gab account.
+    """
+    client: Client = ctx.obj["client"]
+    if not client.username or not client.password:
+        raise ValueError("To pull data you must provide a Gab username and password!")
+    if id is None:
+        id = client.find_latest_user()["id"]
+
+    client.pull_followers(id)
 
 
 @cli.command("users")
