@@ -34,15 +34,10 @@ def write_tqdm(*args, **kwargs):
 
 logger.add(write_tqdm)
 
-proxy_path = f'http://{os.getenv("PROXY_USER")}:{os.getenv("PROXY_PASS")}@{os.getenv("HTTP_PROXY")}'
+proxies = {"http": os.getenv("http_proxy"), "https": os.getenv("https_proxy")}
 
-# Setup proxies
-proxies = {
-    "http": proxy_path,
-    "https": proxy_path,
-}
 headers = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0",
 }
 
 # Constants
