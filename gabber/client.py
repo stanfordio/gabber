@@ -7,15 +7,19 @@ from itertools import islice
 from datetime import datetime, date, timedelta, timezone
 from loguru import logger
 from requests.sessions import HTTPAdapter
-from tqdm import tqdm
-from typing import Iterable, Iterator, List
-from urllib3 import Retry
-from concurrent import futures
 import json
 from concurrent.futures import ThreadPoolExecutor
+from urllib3 import Retry
+from concurrent import futures
+
+
+from tqdm import tqdm
+from typing import Iterable, Iterator, List
 from bs4 import BeautifulSoup
 from dateutil.parser import parse as date_parse
 from ratelimit import limits, sleep_and_retry
+import undetected_chromedriver as uc
+from selenium.webdriver.common.by import By
 
 # Setup loggers
 logger.remove()
@@ -463,34 +467,28 @@ class Client:
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
-        logger.info("Getting session cookie.")
-        try:
-            login_req = self._get(url, skip_sess_refresh=True)
-            login_req.raise_for_status()
+        logger.debug("Getting session cookie.")
+        # TODO: Identify possible errors, wrap in try/except block
+        driver = uc.Chrome()
+        driver.get(url)
+        # TODO: see if we can iterate on retries to increase sleep times
+        sleep(5)  # sleep to allow page to load, cf_challenge to complete.
+        username_input = driver.find_element(By.ID, "user_email")
+        password_input = driver.find_element(By.ID, "user_password")
+        login_button = driver.find_element(By.CLASS_NAME, "btn")
 
-            login_page = BeautifulSoup(login_req.text, "html.parser")
-            csrf = login_page.find("meta", attrs={"name": "csrf-token"})["content"]
-            if not csrf:
-                logger.error("Unable to get csrf token from sign in page!")
-                return None
+        username_input.send_keys(username)
+        password_input.send_keys(password)
+        login_button.click()
+        sleep(5)  # sleep to allow page to load
 
-            payload = {
-                "user[email]": username,
-                "user[password]": password,
-                "authenticity_token": csrf,
-            }
-            sess_req = requests.request(
-                "POST", url, params=payload, cookies=login_req.cookies, headers=headers
-            )
-            sess_req.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"Failed request to login page: {str(e)}")
-            return None
+        # Selenium driver pulls more cookie metadata than needed. Move cookies to key-value pair.
+        cookies = {}
+        for cookie in driver.get_cookies():
+            cookies[cookie["name"]] = cookie["value"]
 
-        if not sess_req.cookies.get("_session_id"):
-            raise ValueError("Invalid gab.com credentials provided!")
-
-        return sess_req.cookies
+        driver.close()
+        return cookies
 
 
 @click.group()
