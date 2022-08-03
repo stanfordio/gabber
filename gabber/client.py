@@ -389,6 +389,7 @@ class Client:
         return all_results
 
     def find_latest_user(self) -> int:
+        # TODO: fix this binary search
         """Binary search to find the approximate latest user."""
 
         lower_bound = 5318531  # Update this from time to time
@@ -527,7 +528,7 @@ def cli(ctx, user, password, threads):
 @click.pass_context
 def followers(ctx, id: int):
     """
-    Pull followers from a Gab account.
+    Experimental feature: pull followers from a Gab account.
     """
     client: Client = ctx.obj["client"]
     if not client.username or not client.password:
