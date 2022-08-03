@@ -20,6 +20,7 @@ from dateutil.parser import parse as date_parse
 from ratelimit import limits, sleep_and_retry
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
+import selenium.common.exceptions
 
 # Setup loggers
 logger.remove()
@@ -471,24 +472,31 @@ class Client:
         # TODO: Identify possible errors, wrap in try/except block
         driver = uc.Chrome()
         driver.get(url)
-        # TODO: see if we can iterate on retries to increase sleep times
-        sleep(5)  # sleep to allow page to load, cf_challenge to complete.
-        username_input = driver.find_element(By.ID, "user_email")
-        password_input = driver.find_element(By.ID, "user_password")
-        login_button = driver.find_element(By.CLASS_NAME, "btn")
-
-        username_input.send_keys(username)
-        password_input.send_keys(password)
-        login_button.click()
-        sleep(5)  # sleep to allow page to load
-
-        # Selenium driver pulls more cookie metadata than needed. Move cookies to key-value pair.
         cookies = {}
-        for cookie in driver.get_cookies():
-            cookies[cookie["name"]] = cookie["value"]
 
-        driver.close()
-        return cookies
+        # TODO: see if we can iterate on retries to increase sleep times
+        try:
+            sleep(5)  # sleep to allow page to load, cf_challenge to complete.
+            username_input = driver.find_element(By.ID, "user_email")
+            password_input = driver.find_element(By.ID, "user_password")
+            login_button = driver.find_element(By.CLASS_NAME, "btn")
+
+            username_input.send_keys(username)
+            password_input.send_keys(password)
+            login_button.click()
+            sleep(5)  # sleep to allow page to load
+            # Selenium-based driver pulls more cookie metadata than needed. Move cookies to key-value pair.
+            for cookie in driver.get_cookies():
+                cookies[cookie["name"]] = cookie["value"]
+            # TODO: check that required session cookie is present
+            driver.close()
+            return cookies
+        except selenium.common.exceptions.NoSuchElementException as no_element:
+            logger.error("Page did not load quickly enough.")
+            logger.exception(no_element)
+            # Without a valid session cookie, pulls for posts will not terminate.
+            # Raise exception and terminate here.
+            raise (no_element)
 
 
 @click.group()
