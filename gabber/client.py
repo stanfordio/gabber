@@ -402,7 +402,7 @@ class Client:
 
     def _was_account_created(self, id: int, accounts_or_groups: string) -> bool:
         """
-        Determine whether account was created, even if deleted.
+        Determine whether account was created, even if suspended.
         Returns true if request for account ID returns 200 or 410.
         """
         result = self._get(GAB_API_BASE_URL + f"/{accounts_or_groups}/{id}")
@@ -473,7 +473,13 @@ class Client:
 
         return int(user["id"])
 
+    def pull_following(self, id: int):
+        return self.pull_follow(id=id, endpoint="following")
+
     def pull_followers(self, id: int):
+        return self.pull_follow(id=id, endpoint="followers")
+
+    def pull_follow(self, id: int, endpoint: string):
         result = {
             "_pulled": datetime.now().isoformat(),
             "id": str(
@@ -483,7 +489,7 @@ class Client:
         }
         logger.info(f"Pulling followers for user {id}.")
         try:
-            resp = self._get(GAB_API_BASE_URL + f"v1/accounts/{id}/followers")
+            resp = self._get(GAB_API_BASE_URL + f"v1/accounts/{id}/{endpoint}")
             result.update(_status_code=resp.status_code)
 
             if resp.status_code != 200:
@@ -620,6 +626,35 @@ def followers(ctx, followers_file: string, id: int):
         print(
             json.dumps(followers, default=json_set_default),
             file=followers_file,
+            flush=True,
+        )
+
+
+@cli.command("following")
+@click.option(
+    "--id", help="User id from which to pull accounts they are following.", type=int
+)
+@click.option(
+    "--following-file",
+    default="gab_following.jsonl",
+    help="Where to output the following file to",
+)
+@click.pass_context
+def following(ctx, following_file: string, id: int):
+    """
+    Experimental feature: pull list of accounts that a Gab account follows.
+    """
+    client: Client = ctx.obj["client"]
+    if not client.username or not client.password:
+        raise ValueError("To pull data you must provide a Gab username and password!")
+    if id is None:
+        id = client.find_latest_user()["id"]
+
+    following = client.pull_following(id)
+    with open(following_file, "w") as following_file:
+        print(
+            json.dumps(following, default=json_set_default),
+            file=following_file,
             flush=True,
         )
 
