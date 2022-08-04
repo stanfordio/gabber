@@ -592,8 +592,13 @@ def cli(ctx, user, password, threads):
 
 @cli.command("followers")
 @click.option("--id", help="User id from which to pull followers.", type=int)
+@click.option(
+    "--followers-file",
+    default="gab_followers.jsonl",
+    help="Where to output the followers file to",
+)
 @click.pass_context
-def followers(ctx, id: int):
+def followers(ctx, followers_file: string, id: int):
     """
     Experimental feature: pull followers from a Gab account.
     """
@@ -603,7 +608,13 @@ def followers(ctx, id: int):
     if id is None:
         id = client.find_latest_user()["id"]
 
-    client.pull_followers(id)
+    followers = client.pull_followers(id)
+    with open(followers_file, "w") as followers_file:
+        print(
+            json.dumps(followers, default=json_set_default),
+            file=followers_file,
+            flush=True,
+        )
 
 
 @cli.command("users")
