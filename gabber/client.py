@@ -1,5 +1,7 @@
 import os
 import sys
+import string
+import re
 from time import sleep
 import click
 import requests
@@ -43,6 +45,7 @@ proxies = {"http": os.getenv("http_proxy"), "https": os.getenv("https_proxy")}
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0",
+    "Authorization": os.getenv("GAB_BEARER_TOKEN"),
 }
 
 # Constants
@@ -56,6 +59,16 @@ def await_any(items: List[futures.Future], pop=True):
         for item in done:
             items.remove(item)
     return done
+
+
+def extract_url_from_link_header(link: string) -> string:
+    """Helper method to pull urls from link header for iteration through accounts"""
+    pattern = "https?://.+?max_id=\d+"
+    matched_links = re.findall(pattern, link)
+    if matched_links:
+        return re.findall(pattern, link)[0]
+    else:
+        return ""
 
 
 class Client:
@@ -388,44 +401,78 @@ class Client:
 
         return all_results
 
-    def find_latest_user(self) -> int:
-        # TODO: fix this binary search
-        """Binary search to find the approximate latest user."""
+    def _was_account_created(self, id: int, accounts_or_groups: string) -> bool:
+        """
+        Determine whether account was created, even if deleted.
+        Returns true if request for account ID returns 200 or 410.
+        """
+        result = self._get(GAB_API_BASE_URL + f"/{accounts_or_groups}/{id}")
+        logger.info(
+            f"Current status code on account #{id}: {result.status_code} {result.status_code == 200 or result.status_code == 410}"
+        )
+        return result.status_code == 200 or result.status_code == 410
 
-        lower_bound = 5318531  # Update this from time to time
+    def find_latest_user(self) -> int:
+        return self._find_latest()
+
+    def find_latest_group(self) -> int:
+        return self._find_latest(lower_bound=65937, accounts_or_groups="groups")
+
+    def _find_latest(
+        self, lower_bound: int = 5318531, accounts_or_groups: string = "accounts"
+    ) -> int:
+        """Binary search to find the approximate latest user."""
+        # lower_bound: Update this from time to time
         logger.debug("Finding upper bound for user search...")
         upper_bound = lower_bound
-        while self.pull_user(upper_bound) != None:
+        # result = self.pull_user(upper_bound)
+        logger.info(f"Available? {self.pull_user(upper_bound)['_available']}")
+        while self._was_account_created(upper_bound, accounts_or_groups):
             logger.debug(f"User {upper_bound} exists; bumping upper bound...")
             upper_bound = round(upper_bound * 1.2)
 
         logger.debug(f"Found upper bound for users at ID {upper_bound}")
 
-        user = None
+        user_id = None
         while lower_bound <= upper_bound:
             middle = (lower_bound + upper_bound) // 2
-            middle_user = self.pull_user(middle)
-            if middle_user is not None:
-                user = middle_user
+            middle_user = self._was_account_created(middle, accounts_or_groups)
+            if middle_user:
+                user_id = middle
 
-            if middle_user is not None:
+            if middle_user:
                 lower_bound = middle + 1
             else:
                 upper_bound = middle - 1
+            logger.debug(f"Upper bound: {upper_bound}. Lower bound: {lower_bound}")
 
-        created_at = date_parse(user["created_at"]).replace(tzinfo=timezone.utc)
-        delta = datetime.utcnow().replace(tzinfo=timezone.utc) - created_at
-        if delta > timedelta(minutes=30):
-            logger.error(
-                f"The most recent user was created more than 30 minutes ago ({user['username']} @ {user['created_at']}, {round(delta.total_seconds() / 60)} mins ago)... that doesn't seem right!"
-            )
-            raise RuntimeError("Unable to find plausibly most recent user")
+        logger.info(f"Retrieving user: {middle}")
 
-        logger.info(
-            f"The latest user on Gab is (roughly) {user['username']} (ID {user['id']}), created at {user['created_at']} ({delta.total_seconds() / 60} minutes ago)"
-        )
+        if accounts_or_groups == "accounts":
+            user = self.pull_user(user_id)
+            time_limit = 30
+        else:
+            user = self.pull_group(user_id)
+            time_limit = 1440  # 24 hrs
+        if user["_available"]:
+            created_at = date_parse(user["created_at"]).replace(tzinfo=timezone.utc)
+            delta = datetime.utcnow().replace(tzinfo=timezone.utc) - created_at
+            if delta > timedelta(minutes=time_limit):
+                logger.error(
+                    f"The most recent user was created more than 30 minutes ago ({user['username']} @ {user['created_at']}, {round(delta.total_seconds() / 60)} mins ago)... that doesn't seem right!"
+                )
+                raise RuntimeError("Unable to find plausibly most recent user")
 
-        return user
+            if accounts_or_groups == "accounts":
+                logger.info(
+                    f"The latest user on Gab is (roughly) {user['username']} (ID {user['id']}), created at {user['created_at']} ({delta.total_seconds() / 60} minutes ago)"
+                )
+            else:
+                logger.info(
+                    f"The latest group on Gab is (roughly) {user['title']} (ID {user['id']}), created at {user['created_at']} ({delta.total_seconds() / 60} minutes ago)"
+                )
+
+        return int(user["id"])
 
     def pull_followers(self, id: int):
         result = {
@@ -433,6 +480,7 @@ class Client:
             "id": str(
                 id
             ),  # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
+            "followers": [],
         }
         logger.info(f"Pulling followers for user {id}.")
         try:
@@ -450,7 +498,26 @@ class Client:
                 )
                 return result
 
-            result.update(_available=True, **resp.json())
+            logger.debug(f"{resp.status_code} - Retrieved followers: {resp.text}")
+            # convert response text to array of dicts
+            result["followers"].extend(resp.json())
+
+            while "Link" in resp.headers:
+                # only need to continue iterating while we're here
+                logger.debug(f"Next URL to pull: {resp.headers['Link']}")
+                next_followers_url = extract_url_from_link_header(resp.headers["Link"])
+                if not next_followers_url:
+                    # check if this is indeed a breaking condition.
+                    logger.debug(
+                        f"Counted {len(result['followers'])} for account {id}."
+                    )
+                    break
+                else:
+                    resp = self._get(next_followers_url)
+                    logger.debug(
+                        f"{resp.status_code} - Retrieved followers: {resp.text}"
+                    )
+                    result["followers"].extend(resp.json())
         except json.JSONDecodeError as e:
             logger.error(f"JSON error #{id}: {str(e)}")
             result.update(_error={str(e)})
