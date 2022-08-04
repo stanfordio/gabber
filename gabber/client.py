@@ -23,6 +23,7 @@ from ratelimit import limits, sleep_and_retry
 import undetected_chromedriver.v2 as uc
 from selenium.webdriver.common.by import By
 import selenium.common.exceptions
+from selenium import webdriver
 
 # Setup loggers
 logger.remove()
@@ -549,7 +550,10 @@ class Client:
                 self.headers["Authorization"] = req_headers["Authorization"]
 
         # TODO: Identify possible errors, wrap in try/except block
-        driver = uc.Chrome(enable_cdp_events=True)
+        options = webdriver.ChromeOptions()
+        options.add_argument("--disable-gpu")
+        options.headless = True
+        driver = uc.Chrome(enable_cdp_events=True, options=options)
         driver.add_cdp_listener("Network.requestWillBeSent", bearer_auth_listener)
         driver.get(url)
         cookies = {}
