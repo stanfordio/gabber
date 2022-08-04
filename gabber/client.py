@@ -487,7 +487,7 @@ class Client:
             logger.error(f"Failed request to login page: {str(e)}")
             return None
 
-        if not sess_req.cookies.get("_session_id"):
+        if not sess_req.cookies.get("_gabsocial_session"):
             raise ValueError("Invalid gab.com credentials provided!")
 
         return sess_req.cookies
