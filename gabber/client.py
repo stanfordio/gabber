@@ -20,7 +20,7 @@ from typing import Iterable, Iterator, List
 from bs4 import BeautifulSoup
 from dateutil.parser import parse as date_parse
 from ratelimit import limits, sleep_and_retry
-import undetected_chromedriver as uc
+import undetected_chromedriver.v2 as uc
 from selenium.webdriver.common.by import By
 import selenium.common.exceptions
 
@@ -42,11 +42,6 @@ def write_tqdm(*args, **kwargs):
 logger.add(write_tqdm)
 
 proxies = {"http": os.getenv("http_proxy"), "https": os.getenv("https_proxy")}
-
-headers = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0",
-    "Authorization": os.getenv("GAB_BEARER_TOKEN"),
-}
 
 # Constants
 GAB_BASE_URL = "https://gab.com"
@@ -77,6 +72,9 @@ class Client:
         self.password = password
         self.threads = threads
         self._requests_since_refresh = 0
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0",
+        }
         if username and password:
             self.sess_cookie = self.get_sess_cookie(username, password)
 
@@ -94,8 +92,9 @@ class Client:
         )
         s.mount("http://", HTTPAdapter(max_retries=retries))
         s.mount("https://", HTTPAdapter(max_retries=retries))
-        logger.debug(f"About to make GET request.")
-        response = s.get(*args, proxies=proxies, headers=headers, timeout=30, **kwargs)
+        response = s.get(
+            *args, proxies=proxies, headers=self.headers, timeout=30, **kwargs
+        )
         logger.info(f"GET: {response.url}")
 
         if not skip_sess_refresh:
@@ -498,7 +497,7 @@ class Client:
                 )
                 return result
 
-            logger.debug(f"{resp.status_code} - Retrieved followers: {resp.text}")
+            # logger.debug(f"{resp.status_code} - Retrieved followers: {resp.text}")
             # convert response text to array of dicts
             result["followers"].extend(resp.json())
 
@@ -514,9 +513,9 @@ class Client:
                     break
                 else:
                     resp = self._get(next_followers_url)
-                    logger.debug(
-                        f"{resp.status_code} - Retrieved followers: {resp.text}"
-                    )
+                    # logger.debug(
+                    #     f"{resp.status_code} - Retrieved followers: {resp.text}"
+                    # )
                     result["followers"].extend(resp.json())
         except json.JSONDecodeError as e:
             logger.error(f"JSON error #{id}: {str(e)}")
@@ -537,8 +536,15 @@ class Client:
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
         logger.debug("Getting session cookie.")
+        # TODO: pull Bearer token from response headers
+        def bearer_auth_listener(eventdata):
+            req_headers = eventdata["params"]["request"]["headers"]
+            if "Authorization" in req_headers:
+                self.headers["Authorization"] = req_headers["Authorization"]
+
         # TODO: Identify possible errors, wrap in try/except block
-        driver = uc.Chrome()
+        driver = uc.Chrome(enable_cdp_events=True)
+        driver.add_cdp_listener("Network.requestWillBeSent", bearer_auth_listener)
         driver.get(url)
         cookies = {}
 
@@ -557,6 +563,7 @@ class Client:
             for cookie in driver.get_cookies():
                 cookies[cookie["name"]] = cookie["value"]
             # TODO: check that required session cookie is present
+
             driver.close()
             return cookies
         except selenium.common.exceptions.NoSuchElementException as no_element:
