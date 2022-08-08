@@ -474,46 +474,24 @@ class Client:
 
         return int(user["id"])
 
-    def pull_following(self, id: int):
-        return self.pull_follow(id=id, endpoint="following")
-
-    def pull_followers(self, id: int):
-        return self.pull_follow(id=id, endpoint="followers")
-
     def pull_follow(self, id: int, endpoint: string):
-        result = {
-            "_pulled": datetime.now().isoformat(),
-            "source_id": str(id),
-        }
         follows = []
 
         logger.info(f"Pulling followers for user {id}.")
         try:
             resp = self._get(GAB_API_BASE_URL + f"v1/accounts/{id}/{endpoint}")
-            result.update(_status_code=resp.status_code)
 
             if resp.status_code != 200:
                 logger.warning(
                     f"Pulling followers for #{id} had non-200 status code ({resp.status_code})"
                 )
-                result.update(
-                    **{
-                        "_available": False,
-                    }
-                )
-                # return result
+                return
 
-            # logger.debug(f"{resp.status_code} - Retrieved followers: {resp.text}")
-            # convert response text to array of dicts
             follows.extend(resp.json())
-            # TODO: comment this out after debugging
-            round = 0
+
             yield follows
             while "Link" in resp.headers:
                 logger.debug(f"Counted {len(follows)} for account {id}.")
-
-                # only need to continue iterating while we're here
-                logger.debug(f"In round {round}")
                 next_followers_url = extract_url_from_link_header(resp.headers["Link"])
                 logger.debug(f"Next URL to pull: {next_followers_url}")
 
@@ -524,26 +502,17 @@ class Client:
                     resp = self._get(next_followers_url)
                     resp_follows = resp.json()
                     for follow in resp_follows:
-                        follow["_pulled"] = result["_pulled"]
-                        follow["_source_id"] = result["source_id"]
+                        follow["_pulled"] = datetime.now().isoformat()
+                        follow["_source_id"] = id
                     follows.extend(resp_follows)
                     yield resp_follows
-                round += 1
-                logger.debug(f"About to enter round {round}")
 
         except json.JSONDecodeError as e:
             logger.error(f"JSON error #{id}: {str(e)}")
-            result.update(_error={str(e)})
-            # return result
+            return
         except Exception as e:
             logger.error(f"Misc. error while pulling user {id}: {str(e)}")
-            result.update(_error={str(e)})
-            # return result
-
-        if result.get("error") == "Record not found":
-            result.update(_available=False, _error=result.get("error"))
-
-        # return follows
+            return
 
     # Adapted from https://github.com/ChrisStevens/garc
     def get_sess_cookie(self, username, password):
