@@ -631,22 +631,9 @@ def followers(ctx, followers_file: string, id: int):
     if id is None:
         id = client.find_latest_user()["id"]
 
-    followers = client.pull_followers(id)
     with open(followers_file, "w") as followers_file:
-        for follower in followers:
-            print(
-                json.dumps(follower, default=json_set_default),
-                file=followers_file,
-                flush=True,
-            )
-
-    # TODO: remove this counter
-    round = 0
-    with open(followers_file, "w") as followers_file:
-        follow_gen = client.pull_follow(id, endpoint="followers")
-        for followers in follow_gen:
-            logger.debug(f"Print round {round}")
-            round += 1
+        follow_generator = client.pull_follow(id, endpoint="followers")
+        for followers in follow_generator:
             for account in followers:
                 print(
                     json.dumps(account, default=json_set_default),
@@ -675,13 +662,9 @@ def following(ctx, following_file: string, id: int):
     if id is None:
         id = client.find_latest_user()["id"]
 
-    # TODO: remove this counter
-    round = 0
     with open(following_file, "w") as following_file:
-        follow_gen = client.pull_follow(id, endpoint="following")
-        for following in follow_gen:
-            logger.debug(f"Print round {round}")
-            round += 1
+        follow_generator = client.pull_follow(id, endpoint="following")
+        for following in follow_generator:
             for account in following:
                 print(
                     json.dumps(account, default=json_set_default),
