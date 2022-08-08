@@ -501,40 +501,49 @@ class Client:
                         "_available": False,
                     }
                 )
-                return result
+                # return result
 
             # logger.debug(f"{resp.status_code} - Retrieved followers: {resp.text}")
             # convert response text to array of dicts
             follows.extend(resp.json())
-
+            # TODO: comment this out after debugging
+            round = 0
+            yield follows
             while "Link" in resp.headers:
+                logger.debug(f"Counted {len(follows)} for account {id}.")
+
                 # only need to continue iterating while we're here
-                logger.debug(f"Next URL to pull: {resp.headers['Link']}")
+                logger.debug(f"In round {round}")
                 next_followers_url = extract_url_from_link_header(resp.headers["Link"])
+                logger.debug(f"Next URL to pull: {next_followers_url}")
+
                 if not next_followers_url:
                     logger.debug(f"Counted {len(follows)} for account {id}.")
                     break
                 else:
                     resp = self._get(next_followers_url)
-                    follows.extend(resp.json())
-
-            for follow in follows:
-                follow["_pulled"] = result["_pulled"]
-                follow["_source_id"] = result["source_id"]
+                    resp_follows = resp.json()
+                    for follow in resp_follows:
+                        follow["_pulled"] = result["_pulled"]
+                        follow["_source_id"] = result["source_id"]
+                    follows.extend(resp_follows)
+                    yield resp_follows
+                round += 1
+                logger.debug(f"About to enter round {round}")
 
         except json.JSONDecodeError as e:
             logger.error(f"JSON error #{id}: {str(e)}")
             result.update(_error={str(e)})
-            return result
+            # return result
         except Exception as e:
             logger.error(f"Misc. error while pulling user {id}: {str(e)}")
             result.update(_error={str(e)})
-            return result
+            # return result
 
         if result.get("error") == "Record not found":
             result.update(_available=False, _error=result.get("error"))
 
-        return follows
+        # return follows
 
     # Adapted from https://github.com/ChrisStevens/garc
     def get_sess_cookie(self, username, password):
@@ -631,6 +640,20 @@ def followers(ctx, followers_file: string, id: int):
                 flush=True,
             )
 
+    # TODO: remove this counter
+    round = 0
+    with open(followers_file, "w") as followers_file:
+        follow_gen = client.pull_follow(id, endpoint="followers")
+        for followers in follow_gen:
+            logger.debug(f"Print round {round}")
+            round += 1
+            for account in followers:
+                print(
+                    json.dumps(account, default=json_set_default),
+                    file=followers_file,
+                    flush=True,
+                )
+
 
 @cli.command("following")
 @click.option(
@@ -652,14 +675,19 @@ def following(ctx, following_file: string, id: int):
     if id is None:
         id = client.find_latest_user()["id"]
 
-    following = client.pull_following(id)
+    # TODO: remove this counter
+    round = 0
     with open(following_file, "w") as following_file:
-        for account in following:
-            print(
-                json.dumps(account, default=json_set_default),
-                file=following_file,
-                flush=True,
-            )
+        follow_gen = client.pull_follow(id, endpoint="following")
+        for following in follow_gen:
+            logger.debug(f"Print round {round}")
+            round += 1
+            for account in following:
+                print(
+                    json.dumps(account, default=json_set_default),
+                    file=following_file,
+                    flush=True,
+                )
 
 
 @cli.command("users")
