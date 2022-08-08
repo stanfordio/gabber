@@ -1,5 +1,7 @@
 import os
 import sys
+import string
+import re
 from time import sleep
 import click
 import requests
@@ -7,15 +9,21 @@ from itertools import islice
 from datetime import datetime, date, timedelta, timezone
 from loguru import logger
 from requests.sessions import HTTPAdapter
-from tqdm import tqdm
-from typing import Iterable, Iterator, List
-from urllib3 import Retry
-from concurrent import futures
 import json
 from concurrent.futures import ThreadPoolExecutor
+from urllib3 import Retry
+from concurrent import futures
+
+
+from tqdm import tqdm
+from typing import Iterable, Iterator, List
 from bs4 import BeautifulSoup
 from dateutil.parser import parse as date_parse
 from ratelimit import limits, sleep_and_retry
+import undetected_chromedriver.v2 as uc
+from selenium.webdriver.common.by import By
+import selenium.common.exceptions
+from selenium import webdriver
 
 # Setup loggers
 logger.remove()
@@ -36,10 +44,6 @@ logger.add(write_tqdm)
 
 proxies = {"http": os.getenv("http_proxy"), "https": os.getenv("https_proxy")}
 
-headers = {
-    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0",
-}
-
 # Constants
 GAB_BASE_URL = "https://gab.com"
 GAB_API_BASE_URL = "https://gab.com/api/"
@@ -53,12 +57,25 @@ def await_any(items: List[futures.Future], pop=True):
     return done
 
 
+def extract_url_from_link_header(link: string) -> string:
+    """Helper method to pull urls from link header for iteration through accounts"""
+    pattern = "https?://.+?max_id=\d+"
+    matched_links = re.findall(pattern, link)
+    if matched_links:
+        return re.findall(pattern, link)[0]
+    else:
+        return ""
+
+
 class Client:
     def __init__(self, username: str, password: str, threads: int):
         self.username = username
         self.password = password
         self.threads = threads
         self._requests_since_refresh = 0
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0",
+        }
         if username and password:
             self.sess_cookie = self.get_sess_cookie(username, password)
 
@@ -76,8 +93,9 @@ class Client:
         )
         s.mount("http://", HTTPAdapter(max_retries=retries))
         s.mount("https://", HTTPAdapter(max_retries=retries))
-        logger.debug(f"About to make GET request.")
-        response = s.get(*args, proxies=proxies, headers=headers, timeout=30, **kwargs)
+        response = s.get(
+            *args, proxies=proxies, headers=self.headers, timeout=30, **kwargs
+        )
         logger.info(f"GET: {response.url}")
 
         if not skip_sess_refresh:
@@ -383,54 +401,96 @@ class Client:
 
         return all_results
 
-    def find_latest_user(self) -> int:
-        """Binary search to find the approximate latest user."""
+    def _was_account_created(self, id: int, accounts_or_groups: string) -> bool:
+        """
+        Determine whether account was created, even if suspended.
+        Returns true if request for account ID returns 200 or 410.
+        """
+        result = self._get(GAB_API_BASE_URL + f"/{accounts_or_groups}/{id}")
+        logger.info(
+            f"Current status code on account #{id}: {result.status_code} {result.status_code == 200 or result.status_code == 410}"
+        )
+        return result.status_code == 200 or result.status_code == 410
 
-        lower_bound = 5318531  # Update this from time to time
+    def find_latest_user(self) -> int:
+        return self._find_latest()
+
+    def find_latest_group(self) -> int:
+        return self._find_latest(lower_bound=65937, accounts_or_groups="groups")
+
+    def _find_latest(
+        self, lower_bound: int = 5318531, accounts_or_groups: string = "accounts"
+    ) -> int:
+        """Binary search to find the approximate latest user."""
+        # lower_bound: Update this from time to time
         logger.debug("Finding upper bound for user search...")
         upper_bound = lower_bound
-        while self.pull_user(upper_bound) != None:
+        # result = self.pull_user(upper_bound)
+        logger.info(f"Available? {self.pull_user(upper_bound)['_available']}")
+        while self._was_account_created(upper_bound, accounts_or_groups):
             logger.debug(f"User {upper_bound} exists; bumping upper bound...")
             upper_bound = round(upper_bound * 1.2)
 
         logger.debug(f"Found upper bound for users at ID {upper_bound}")
 
-        user = None
+        user_id = None
         while lower_bound <= upper_bound:
             middle = (lower_bound + upper_bound) // 2
-            middle_user = self.pull_user(middle)
-            if middle_user is not None:
-                user = middle_user
+            middle_user = self._was_account_created(middle, accounts_or_groups)
+            if middle_user:
+                user_id = middle
 
-            if middle_user is not None:
+            if middle_user:
                 lower_bound = middle + 1
             else:
                 upper_bound = middle - 1
+            logger.debug(f"Upper bound: {upper_bound}. Lower bound: {lower_bound}")
 
-        created_at = date_parse(user["created_at"]).replace(tzinfo=timezone.utc)
-        delta = datetime.utcnow().replace(tzinfo=timezone.utc) - created_at
-        if delta > timedelta(minutes=30):
-            logger.error(
-                f"The most recent user was created more than 30 minutes ago ({user['username']} @ {user['created_at']}, {round(delta.total_seconds() / 60)} mins ago)... that doesn't seem right!"
-            )
-            raise RuntimeError("Unable to find plausibly most recent user")
+        logger.info(f"Retrieving user: {middle}")
 
-        logger.info(
-            f"The latest user on Gab is (roughly) {user['username']} (ID {user['id']}), created at {user['created_at']} ({delta.total_seconds() / 60} minutes ago)"
-        )
+        if accounts_or_groups == "accounts":
+            user = self.pull_user(user_id)
+            time_limit = 30
+        else:
+            user = self.pull_group(user_id)
+            time_limit = 1440  # 24 hrs
+        if user["_available"]:
+            created_at = date_parse(user["created_at"]).replace(tzinfo=timezone.utc)
+            delta = datetime.utcnow().replace(tzinfo=timezone.utc) - created_at
+            if delta > timedelta(minutes=time_limit):
+                logger.error(
+                    f"The most recent user was created more than 30 minutes ago ({user['username']} @ {user['created_at']}, {round(delta.total_seconds() / 60)} mins ago)... that doesn't seem right!"
+                )
+                raise RuntimeError("Unable to find plausibly most recent user")
 
-        return user
+            if accounts_or_groups == "accounts":
+                logger.info(
+                    f"The latest user on Gab is (roughly) {user['username']} (ID {user['id']}), created at {user['created_at']} ({delta.total_seconds() / 60} minutes ago)"
+                )
+            else:
+                logger.info(
+                    f"The latest group on Gab is (roughly) {user['title']} (ID {user['id']}), created at {user['created_at']} ({delta.total_seconds() / 60} minutes ago)"
+                )
+
+        return int(user["id"])
+
+    def pull_following(self, id: int):
+        return self.pull_follow(id=id, endpoint="following")
 
     def pull_followers(self, id: int):
+        return self.pull_follow(id=id, endpoint="followers")
+
+    def pull_follow(self, id: int, endpoint: string):
         result = {
             "_pulled": datetime.now().isoformat(),
             "id": str(
                 id
             ),  # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
+            "followers": [],
         }
         logger.info(f"Pulling followers for user {id}.")
         try:
-            resp = self._get(GAB_API_BASE_URL + f"v1/accounts/{id}/followers")
+            resp = self._get(GAB_API_BASE_URL + f"v1/accounts/{id}/{endpoint}")
             result.update(_status_code=resp.status_code)
 
             if resp.status_code != 200:
@@ -444,7 +504,26 @@ class Client:
                 )
                 return result
 
-            result.update(_available=True, **resp.json())
+            # logger.debug(f"{resp.status_code} - Retrieved followers: {resp.text}")
+            # convert response text to array of dicts
+            result["followers"].extend(resp.json())
+
+            while "Link" in resp.headers:
+                # only need to continue iterating while we're here
+                logger.debug(f"Next URL to pull: {resp.headers['Link']}")
+                next_followers_url = extract_url_from_link_header(resp.headers["Link"])
+                if not next_followers_url:
+                    # check if this is indeed a breaking condition.
+                    logger.debug(
+                        f"Counted {len(result['followers'])} for account {id}."
+                    )
+                    break
+                else:
+                    resp = self._get(next_followers_url)
+                    # logger.debug(
+                    #     f"{resp.status_code} - Retrieved followers: {resp.text}"
+                    # )
+                    result["followers"].extend(resp.json())
         except json.JSONDecodeError as e:
             logger.error(f"JSON error #{id}: {str(e)}")
             result.update(_error={str(e)})
@@ -463,34 +542,46 @@ class Client:
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
-        logger.info("Getting session cookie.")
+        logger.debug("Getting session cookie.")
+        # TODO: pull Bearer token from response headers
+        def bearer_auth_listener(eventdata):
+            req_headers = eventdata["params"]["request"]["headers"]
+            if "Authorization" in req_headers:
+                self.headers["Authorization"] = req_headers["Authorization"]
+
+        # TODO: Identify possible errors, wrap in try/except block
+        options = webdriver.ChromeOptions()
+        options.add_argument("--disable-gpu")
+        options.headless = True
+        driver = uc.Chrome(enable_cdp_events=True, options=options)
+        driver.add_cdp_listener("Network.requestWillBeSent", bearer_auth_listener)
+        driver.get(url)
+        cookies = {}
+
+        # TODO: see if we can iterate on retries to increase sleep times
         try:
-            login_req = self._get(url, skip_sess_refresh=True)
-            login_req.raise_for_status()
+            sleep(5)  # sleep to allow page to load, cf_challenge to complete.
+            username_input = driver.find_element(By.ID, "user_email")
+            password_input = driver.find_element(By.ID, "user_password")
+            login_button = driver.find_element(By.CLASS_NAME, "btn")
 
-            login_page = BeautifulSoup(login_req.text, "html.parser")
-            csrf = login_page.find("meta", attrs={"name": "csrf-token"})["content"]
-            if not csrf:
-                logger.error("Unable to get csrf token from sign in page!")
-                return None
+            username_input.send_keys(username)
+            password_input.send_keys(password)
+            login_button.click()
+            sleep(5)  # sleep to allow page to load
+            # Selenium-based driver pulls more cookie metadata than needed. Move cookies to key-value pair.
+            for cookie in driver.get_cookies():
+                cookies[cookie["name"]] = cookie["value"]
+            # TODO: check that required session cookie is present
 
-            payload = {
-                "user[email]": username,
-                "user[password]": password,
-                "authenticity_token": csrf,
-            }
-            sess_req = requests.request(
-                "POST", url, params=payload, cookies=login_req.cookies, headers=headers
-            )
-            sess_req.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            logger.error(f"Failed request to login page: {str(e)}")
-            return None
-
-        if not sess_req.cookies.get("_session_id"):
-            raise ValueError("Invalid gab.com credentials provided!")
-
-        return sess_req.cookies
+            driver.close()
+            return cookies
+        except selenium.common.exceptions.NoSuchElementException as no_element:
+            logger.error("Page did not load quickly enough.")
+            logger.exception(no_element)
+            # Without a valid session cookie, pulls for posts will not terminate.
+            # Raise exception and terminate here.
+            raise (no_element)
 
 
 @click.group()
@@ -518,10 +609,15 @@ def cli(ctx, user, password, threads):
 
 @cli.command("followers")
 @click.option("--id", help="User id from which to pull followers.", type=int)
+@click.option(
+    "--followers-file",
+    default="gab_followers.jsonl",
+    help="Where to output the followers file to",
+)
 @click.pass_context
-def followers(ctx, id: int):
+def followers(ctx, followers_file: string, id: int):
     """
-    Pull followers from a Gab account.
+    Experimental feature: pull followers from a Gab account.
     """
     client: Client = ctx.obj["client"]
     if not client.username or not client.password:
@@ -529,7 +625,42 @@ def followers(ctx, id: int):
     if id is None:
         id = client.find_latest_user()["id"]
 
-    client.pull_followers(id)
+    followers = client.pull_followers(id)
+    with open(followers_file, "w") as followers_file:
+        print(
+            json.dumps(followers, default=json_set_default),
+            file=followers_file,
+            flush=True,
+        )
+
+
+@cli.command("following")
+@click.option(
+    "--id", help="User id from which to pull accounts they are following.", type=int
+)
+@click.option(
+    "--following-file",
+    default="gab_following.jsonl",
+    help="Where to output the following file to",
+)
+@click.pass_context
+def following(ctx, following_file: string, id: int):
+    """
+    Experimental feature: pull list of accounts that a Gab account follows.
+    """
+    client: Client = ctx.obj["client"]
+    if not client.username or not client.password:
+        raise ValueError("To pull data you must provide a Gab username and password!")
+    if id is None:
+        id = client.find_latest_user()["id"]
+
+    following = client.pull_following(id)
+    with open(following_file, "w") as following_file:
+        print(
+            json.dumps(following, default=json_set_default),
+            file=following_file,
+            flush=True,
+        )
 
 
 @cli.command("users")
