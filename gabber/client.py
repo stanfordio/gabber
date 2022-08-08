@@ -483,11 +483,10 @@ class Client:
     def pull_follow(self, id: int, endpoint: string):
         result = {
             "_pulled": datetime.now().isoformat(),
-            "id": str(
-                id
-            ),  # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
-            "followers": [],
+            "source_id": str(id),
         }
+        follows = []
+
         logger.info(f"Pulling followers for user {id}.")
         try:
             resp = self._get(GAB_API_BASE_URL + f"v1/accounts/{id}/{endpoint}")
@@ -506,24 +505,23 @@ class Client:
 
             # logger.debug(f"{resp.status_code} - Retrieved followers: {resp.text}")
             # convert response text to array of dicts
-            result["followers"].extend(resp.json())
+            follows.extend(resp.json())
 
             while "Link" in resp.headers:
                 # only need to continue iterating while we're here
                 logger.debug(f"Next URL to pull: {resp.headers['Link']}")
                 next_followers_url = extract_url_from_link_header(resp.headers["Link"])
                 if not next_followers_url:
-                    # check if this is indeed a breaking condition.
-                    logger.debug(
-                        f"Counted {len(result['followers'])} for account {id}."
-                    )
+                    logger.debug(f"Counted {len(follows)} for account {id}.")
                     break
                 else:
                     resp = self._get(next_followers_url)
-                    # logger.debug(
-                    #     f"{resp.status_code} - Retrieved followers: {resp.text}"
-                    # )
-                    result["followers"].extend(resp.json())
+                    follows.extend(resp.json())
+
+            for follow in follows:
+                follow["_pulled"] = result["_pulled"]
+                follow["_source_id"] = result["source_id"]
+
         except json.JSONDecodeError as e:
             logger.error(f"JSON error #{id}: {str(e)}")
             result.update(_error={str(e)})
@@ -536,20 +534,19 @@ class Client:
         if result.get("error") == "Record not found":
             result.update(_available=False, _error=result.get("error"))
 
-        return result
+        return follows
 
     # Adapted from https://github.com/ChrisStevens/garc
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
         logger.debug("Getting session cookie.")
-        # TODO: pull Bearer token from response headers
+
         def bearer_auth_listener(eventdata):
             req_headers = eventdata["params"]["request"]["headers"]
             if "Authorization" in req_headers:
                 self.headers["Authorization"] = req_headers["Authorization"]
 
-        # TODO: Identify possible errors, wrap in try/except block
         options = webdriver.ChromeOptions()
         options.add_argument("--disable-gpu")
         options.headless = True
@@ -627,11 +624,12 @@ def followers(ctx, followers_file: string, id: int):
 
     followers = client.pull_followers(id)
     with open(followers_file, "w") as followers_file:
-        print(
-            json.dumps(followers, default=json_set_default),
-            file=followers_file,
-            flush=True,
-        )
+        for follower in followers:
+            print(
+                json.dumps(follower, default=json_set_default),
+                file=followers_file,
+                flush=True,
+            )
 
 
 @cli.command("following")
@@ -656,11 +654,12 @@ def following(ctx, following_file: string, id: int):
 
     following = client.pull_following(id)
     with open(following_file, "w") as following_file:
-        print(
-            json.dumps(following, default=json_set_default),
-            file=following_file,
-            flush=True,
-        )
+        for account in following:
+            print(
+                json.dumps(account, default=json_set_default),
+                file=following_file,
+                flush=True,
+            )
 
 
 @cli.command("users")
