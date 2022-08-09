@@ -475,82 +475,57 @@ class Client:
 
         return int(user["id"])
 
-    def pull_following(self, id: int):
-        return self.pull_follow(id=id, endpoint="following")
-
-    def pull_followers(self, id: int):
-        return self.pull_follow(id=id, endpoint="followers")
-
     def pull_follow(self, id: int, endpoint: string):
-        result = {
-            "_pulled": datetime.now().isoformat(),
-            "id": str(
-                id
-            ),  # When the pull errors, we still want to have the ID. It's ok that data from Gab will probably override this field.
-            "followers": [],
-        }
+        follows = []
+
         logger.info(f"Pulling followers for user {id}.")
         try:
             resp = self._get(GAB_API_BASE_URL + f"v1/accounts/{id}/{endpoint}")
-            result.update(_status_code=resp.status_code)
 
             if resp.status_code != 200:
                 logger.warning(
                     f"Pulling followers for #{id} had non-200 status code ({resp.status_code})"
                 )
-                result.update(
-                    **{
-                        "_available": False,
-                    }
-                )
-                return result
+                return
 
-            # logger.debug(f"{resp.status_code} - Retrieved followers: {resp.text}")
-            # convert response text to array of dicts
-            result["followers"].extend(resp.json())
+            follows.extend(resp.json())
 
+            yield follows
             while "Link" in resp.headers:
-                # only need to continue iterating while we're here
-                logger.debug(f"Next URL to pull: {resp.headers['Link']}")
+                logger.debug(f"Counted {len(follows)} for account {id}.")
                 next_followers_url = extract_url_from_link_header(resp.headers["Link"])
+                logger.debug(f"Next URL to pull: {next_followers_url}")
+
                 if not next_followers_url:
-                    # check if this is indeed a breaking condition.
-                    logger.debug(
-                        f"Counted {len(result['followers'])} for account {id}."
-                    )
+                    logger.debug(f"Counted {len(follows)} for account {id}.")
                     break
                 else:
                     resp = self._get(next_followers_url)
-                    # logger.debug(
-                    #     f"{resp.status_code} - Retrieved followers: {resp.text}"
-                    # )
-                    result["followers"].extend(resp.json())
+                    resp_follows = resp.json()
+                    for follow in resp_follows:
+                        follow["_pulled"] = datetime.now().isoformat()
+                        follow["_source_id"] = id
+                    follows.extend(resp_follows)
+                    yield resp_follows
+
         except json.JSONDecodeError as e:
             logger.error(f"JSON error #{id}: {str(e)}")
-            result.update(_error={str(e)})
-            return result
+            return
         except Exception as e:
             logger.error(f"Misc. error while pulling user {id}: {str(e)}")
-            result.update(_error={str(e)})
-            return result
-
-        if result.get("error") == "Record not found":
-            result.update(_available=False, _error=result.get("error"))
-
-        return result
+            return
 
     # Adapted from https://github.com/ChrisStevens/garc
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
         logger.debug("Getting session cookie.")
-        # TODO: pull Bearer token from response headers
+
         def bearer_auth_listener(eventdata):
             req_headers = eventdata["params"]["request"]["headers"]
             if "Authorization" in req_headers:
                 self.headers["Authorization"] = req_headers["Authorization"]
 
-        # TODO: Identify possible errors, wrap in try/except block
         options = webdriver.ChromeOptions()
         options.add_argument("--disable-gpu")
         options.headless = True
@@ -626,13 +601,15 @@ def followers(ctx, followers_file: string, id: int):
     if id is None:
         id = client.find_latest_user()
 
-    followers = client.pull_followers(id)
     with open(followers_file, "w") as followers_file:
-        print(
-            json.dumps(followers, default=json_set_default),
-            file=followers_file,
-            flush=True,
-        )
+        follow_generator = client.pull_follow(id, endpoint="followers")
+        for followers in follow_generator:
+            for account in followers:
+                print(
+                    json.dumps(account, default=json_set_default),
+                    file=followers_file,
+                    flush=True,
+                )
 
 
 @cli.command("following")
@@ -655,13 +632,15 @@ def following(ctx, following_file: string, id: int):
     if id is None:
         id = client.find_latest_user()
 
-    following = client.pull_following(id)
     with open(following_file, "w") as following_file:
-        print(
-            json.dumps(following, default=json_set_default),
-            file=following_file,
-            flush=True,
-        )
+        follow_generator = client.pull_follow(id, endpoint="following")
+        for following in follow_generator:
+            for account in following:
+                print(
+                    json.dumps(account, default=json_set_default),
+                    file=following_file,
+                    flush=True,
+                )
 
 
 @cli.command("users")
