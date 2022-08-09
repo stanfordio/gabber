@@ -97,6 +97,7 @@ class Client:
             *args, proxies=proxies, headers=self.headers, timeout=30, **kwargs
         )
         logger.info(f"GET: {response.url}")
+        logger.info(f"Response status: {response.status_code}")
 
         if not skip_sess_refresh:
             self._requests_since_refresh += 1
@@ -406,7 +407,7 @@ class Client:
         Determine whether account was created, even if suspended.
         Returns true if request for account ID returns 200 or 410.
         """
-        result = self._get(GAB_API_BASE_URL + f"/{accounts_or_groups}/{id}")
+        result = self._get(GAB_API_BASE_URL + f"v1/{accounts_or_groups}/{id}")
         logger.info(
             f"Current status code on account #{id}: {result.status_code} {result.status_code == 200 or result.status_code == 410}"
         )
@@ -623,7 +624,7 @@ def followers(ctx, followers_file: string, id: int):
     if not client.username or not client.password:
         raise ValueError("To pull data you must provide a Gab username and password!")
     if id is None:
-        id = client.find_latest_user()["id"]
+        id = client.find_latest_user()
 
     followers = client.pull_followers(id)
     with open(followers_file, "w") as followers_file:
@@ -652,7 +653,7 @@ def following(ctx, following_file: string, id: int):
     if not client.username or not client.password:
         raise ValueError("To pull data you must provide a Gab username and password!")
     if id is None:
-        id = client.find_latest_user()["id"]
+        id = client.find_latest_user()
 
     following = client.pull_following(id)
     with open(following_file, "w") as following_file:
@@ -709,7 +710,7 @@ def users(
         raise ValueError("To pull data you must provide a Gab username and password!")
 
     if last is None:
-        last = client.find_latest_user()["id"]
+        last = client.find_latest_user()
 
     users = iter(range(first, int(last) + 1))
 
