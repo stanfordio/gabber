@@ -16,8 +16,7 @@ from concurrent import futures
 
 
 from tqdm import tqdm
-from typing import Iterable, Iterator, List
-from bs4 import BeautifulSoup
+from typing import Iterable, List
 from dateutil.parser import parse as date_parse
 from ratelimit import limits, sleep_and_retry
 import undetected_chromedriver.v2 as uc
@@ -109,6 +108,28 @@ class Client:
                 self._requests_since_refresh = 0
 
         return response
+
+    # Account lookup by username
+    def lookup_by_username(self, username: str):
+        gab_username_link = GAB_API_BASE_URL + "v1/account_by_username/" + username
+        try:
+            resp = self._get(gab_username_link)
+            response_data = resp.json()
+
+            if resp.status_code != 200:
+                logger.warning(
+                    f"Pulling user #{id} had non-200 status code ({resp.status_code})"
+                )
+                print("N/A - Username not found")
+            else:
+                print(response_data["id"])
+
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON error #{id}: {str(e)}")
+            print("N/A")
+        except Exception as e:
+            logger.error(f"Misc. error while pulling user {id}: {str(e)}")
+            print("N/A")
 
     def pull_user(self, id: int) -> dict:
         """Pull the given user's information from Gab. Returns None if not found."""
@@ -581,6 +602,18 @@ class Client:
 def cli(ctx, user, password, threads):
     ctx.ensure_object(dict)
     ctx.obj["client"] = Client(user, password, threads)
+
+
+@cli.command("lookup")
+@click.argument("username", type=str)
+@click.pass_context
+def lookup(ctx, username: str):
+
+    client: Client = ctx.obj["client"]
+    if not client.username or not client.password:
+        raise ValueError("To pull data you must provide a Gab username and password!")
+
+    client.lookup_by_username(username)
 
 
 @cli.command("followers")
