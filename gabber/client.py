@@ -48,7 +48,6 @@ proxies = {"http": os.getenv("http_proxy"), "https": os.getenv("https_proxy")}
 GAB_BASE_URL = "https://gab.com"
 GAB_API_BASE_URL = "https://gab.com/api/"
 
-
 def await_any(items: List[futures.Future], pop=True):
     done, _not_done = futures.wait(items, return_when=futures.FIRST_COMPLETED)
     if pop:
@@ -109,6 +108,30 @@ class Client:
                 self._requests_since_refresh = 0
 
         return response
+
+    # account lookup by username
+    # GAB_API_BASE_URL = "https://gab.com/api/"
+    def lookup_by_username(self, username: str):
+        gab_username_link = GAB_API_BASE_URL + "v1/account_by_username/" + username
+        try:
+            resp = self._get(gab_username_link)
+            response_data = resp.json()
+
+            if resp.status_code != 200:
+                logger.warning(
+                    f"Pulling user #{id} had non-200 status code ({resp.status_code})"
+                )
+                print("N/A - Username not found")
+            else:
+                print(response_data["id"])
+
+        except json.JSONDecodeError as e:
+            logger.error(f"JSON error #{id}: {str(e)}")
+            print("N/A")
+        except Exception as e:
+            logger.error(f"Misc. error while pulling user {id}: {str(e)}")
+            print("N/A")
+
 
     def pull_user(self, id: int) -> dict:
         """Pull the given user's information from Gab. Returns None if not found."""
@@ -582,6 +605,18 @@ def cli(ctx, user, password, threads):
     ctx.ensure_object(dict)
     ctx.obj["client"] = Client(user, password, threads)
 
+# newly added cli command - dec 10
+@cli.command("username_lookup")
+@click.option("--username", help="The query to search for.", type=str)
+@click.pass_context
+def username_lookup(ctx, username: str):
+
+    client: Client = ctx.obj["client"]
+    if not client.username or not client.password:
+        raise ValueError("To pull data you must provide a Gab username and password!")
+
+    client.lookup_by_username(username)
+
 
 @cli.command("followers")
 @click.option("--id", help="User id from which to pull followers.", type=int)
@@ -610,7 +645,6 @@ def followers(ctx, followers_file: string, id: int):
                     file=followers_file,
                     flush=True,
                 )
-
 
 @cli.command("following")
 @click.option(
