@@ -16,8 +16,7 @@ from concurrent import futures
 
 
 from tqdm import tqdm
-from typing import Iterable, Iterator, List
-from bs4 import BeautifulSoup
+from typing import Iterable, List
 from dateutil.parser import parse as date_parse
 from ratelimit import limits, sleep_and_retry
 import undetected_chromedriver.v2 as uc
@@ -47,6 +46,7 @@ proxies = {"http": os.getenv("http_proxy"), "https": os.getenv("https_proxy")}
 # Constants
 GAB_BASE_URL = "https://gab.com"
 GAB_API_BASE_URL = "https://gab.com/api/"
+
 
 def await_any(items: List[futures.Future], pop=True):
     done, _not_done = futures.wait(items, return_when=futures.FIRST_COMPLETED)
@@ -109,8 +109,7 @@ class Client:
 
         return response
 
-    # account lookup by username
-    # GAB_API_BASE_URL = "https://gab.com/api/"
+    # Account lookup by username
     def lookup_by_username(self, username: str):
         gab_username_link = GAB_API_BASE_URL + "v1/account_by_username/" + username
         try:
@@ -131,7 +130,6 @@ class Client:
         except Exception as e:
             logger.error(f"Misc. error while pulling user {id}: {str(e)}")
             print("N/A")
-
 
     def pull_user(self, id: int) -> dict:
         """Pull the given user's information from Gab. Returns None if not found."""
@@ -605,11 +603,11 @@ def cli(ctx, user, password, threads):
     ctx.ensure_object(dict)
     ctx.obj["client"] = Client(user, password, threads)
 
-# newly added cli command - dec 10
-@cli.command("username_lookup")
-@click.option("--username", help="The query to search for.", type=str)
+
+@cli.command("lookup")
+@click.argument("username", type=str)
 @click.pass_context
-def username_lookup(ctx, username: str):
+def lookup(ctx, username: str):
 
     client: Client = ctx.obj["client"]
     if not client.username or not client.password:
@@ -645,6 +643,7 @@ def followers(ctx, followers_file: string, id: int):
                     file=followers_file,
                     flush=True,
                 )
+
 
 @cli.command("following")
 @click.option(
