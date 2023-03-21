@@ -19,7 +19,7 @@ from tqdm import tqdm
 from typing import Iterable, List
 from dateutil.parser import parse as date_parse
 from ratelimit import limits, sleep_and_retry
-import undetected_chromedriver.v2 as uc
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 import selenium.common.exceptions
 from selenium import webdriver
