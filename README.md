@@ -61,8 +61,8 @@ Options:
 
 ## Environment Variables
 
-* `HTTP_PROXY` — route all traffic through this HTTP proxy (highly recommended given Gab's rate limiting)
-* `HTTPS_PROXY` — route all traffic through this HTTPS proxy (highly recommended given Gab's rate limiting)
+* `http_proxy` — route all traffic through this HTTP proxy (highly recommended given Gab's rate limiting)
+* `https_proxy` — route all traffic through this HTTPS proxy (highly recommended given Gab's rate limiting)
 * `GAB_USER` — the (optional) username to authenticate as with Gab
 * `GAB_PASS` — the (optional) password to use while authenticating with Gab
 
