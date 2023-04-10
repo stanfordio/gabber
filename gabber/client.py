@@ -4,7 +4,10 @@ import string
 import re
 from time import sleep
 import click
-import requests
+
+# import requests
+
+from curl_cffi import requests
 from itertools import islice
 from datetime import datetime, date, timedelta, timezone
 from loguru import logger
@@ -90,13 +93,15 @@ class Client:
             backoff_factor=0.5,
             status_forcelist=[413, 429, 503, 403, 500, 502, 523, 520],
         )
-        s.mount("http://", HTTPAdapter(max_retries=retries))
-        s.mount("https://", HTTPAdapter(max_retries=retries))
+        # s.mount("http://", HTTPAdapter(max_retries=retries))
+        # s.mount("https://", HTTPAdapter(max_retries=retries))
         response = s.get(
             *args, proxies=proxies, headers=self.headers, timeout=30, **kwargs
         )
         logger.info(f"GET: {response.url}")
-        logger.info(f"Response status: {response.status_code}")
+        logger.info(
+            f"Response status: {response.status_code} {response.reason} {response.text}"
+        )
 
         if not skip_sess_refresh:
             self._requests_since_refresh += 1
@@ -108,6 +113,40 @@ class Client:
                 self._requests_since_refresh = 0
 
         return response
+
+    def _pull_replies(self, post_id, posts_array):
+        gab_reply_link = GAB_API_BASE_URL + "v1/status_comments/" + post_id
+        page_number = 1
+        # next_replies = gab_reply_link + "?max_id=" + str(page_number)
+
+        while True:
+            try:
+                logger.debug(f"Getting replies on post {post_id} via {gab_reply_link}")
+                logger.debug(f"My session cookie: {self.sess_cookie}")
+                resp = self._get(
+                    gab_reply_link,
+                    params={"max_id": page_number},
+                    cookies=self.sess_cookie,
+                ).json()
+                if len(resp) == 0:
+                    break
+                else:
+                    logger.debug(f"Response length: {len(resp)}")
+                    logger.debug(resp)
+
+                for post in resp:
+                    posts_array.append(post)
+
+                page_number += 1
+                # next_replies = gab_reply_link + "?max_id=" + str(page_number)
+            except Exception as e:
+                logger.error(
+                    f"Misc. error while pulling replies on post {post_id}: {str(e)}"
+                )
+                print("N/A")
+                break
+
+        return
 
     # Account lookup by username
     def lookup_by_username(self, username: str):
@@ -292,11 +331,12 @@ class Client:
 
         params = {}
         all_posts = []
+        logger.debug(f"Pulling statuses for user {id}")
         while True:
             try:
                 url = GAB_API_BASE_URL + f"v1/accounts/{id}/statuses"
-                if not replies:
-                    url += "?exclude_replies=true"
+                # if not replies:
+                #     url += "?exclude_replies=true"
                 result = self._get(url, params=params, cookies=self.sess_cookie).json()
             except json.JSONDecodeError as e:
                 logger.error(f"Unable to pull user #{id}'s statuses': {e}")
@@ -334,6 +374,15 @@ class Client:
                 )
                 if created_after and date_created < created_after:
                     continue
+
+                num_replies = post.get("replies_count")
+
+                if replies and num_replies > 0:
+                    logger.debug("Replies found")
+                    self._pull_replies(post["id"], all_posts)
+                # else:
+                #     logger.debug(f"Replies enabled: {replies}")
+                #     logger.debug(f"Replies count: {num_replies}")
 
                 all_posts.append(post)
 
@@ -576,6 +625,7 @@ class Client:
         except selenium.common.exceptions.NoSuchElementException as no_element:
             logger.error("Page did not load quickly enough.")
             logger.exception(no_element)
+            driver.quit()
             # Without a valid session cookie, pulls for posts will not terminate.
             # Raise exception and terminate here.
             raise (no_element)
