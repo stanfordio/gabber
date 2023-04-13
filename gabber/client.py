@@ -29,6 +29,7 @@ from selenium import webdriver
 logger.remove()
 
 REQUESTS_PER_SESSION_REFRESH = 5000
+AUTH_TOKEN_RETRIES = 10
 
 
 class AuthorizationError(Exception):
@@ -547,7 +548,7 @@ class Client:
             return
 
     # Adapted from https://github.com/ChrisStevens/garc
-    @retry(AuthorizationError, tries=10)
+    @retry(AuthorizationError, tries=AUTH_TOKEN_RETRIES)
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
@@ -575,21 +576,19 @@ class Client:
 
         try:
             driver.get(url)
-            sleep(5)  # sleep to allow page to load, cf_challenge to complete.
-            username_input = driver.find_element(By.ID, "user_email")
+            # sleep(5)  # sleep to allow page to load, cf_challenge to complete.
+            username_input = driver.find_element(By.ID, "user_fmail")
             password_input = driver.find_element(By.ID, "user_password")
             login_button = driver.find_element(By.CLASS_NAME, "btn")
 
             username_input.send_keys(username)
             password_input.send_keys(password)
             login_button.click()
-            sleep(5)  # sleep to allow page to load
+            # sleep(5)  # sleep to allow page to load
             # Selenium-based driver pulls more cookie metadata than needed. Move cookies to key-value pair.
             for cookie in driver.get_cookies():
                 cookies[cookie["name"]] = cookie["value"]
 
-            driver.close()
-            return cookies
         except selenium.common.exceptions.NoSuchElementException as no_element:
             logger.error("Page did not load quickly enough.")
             logger.exception(no_element)
@@ -600,6 +599,9 @@ class Client:
             logger.error("Issue initializing Chrome driver. Try running again.")
             logger.exception(chrome_driver_exception)
             raise (AuthorizationError)
+        finally:
+            driver.quit()
+        return cookies
 
 
 @click.group()
@@ -658,6 +660,7 @@ def followers(ctx, followers_file: string, id: int):
     with open(followers_file, "w") as followers_file:
         follow_generator = client.pull_follow(id, endpoint="followers")
         for followers in follow_generator:
+            # TODO: track condition for output file: if does not exist, just print to stdout
             for account in followers:
                 print(
                     json.dumps(account, default=json_set_default),
