@@ -13,6 +13,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from urllib3 import Retry
 from concurrent import futures
+from retry import retry
 
 
 from tqdm import tqdm
@@ -30,6 +31,11 @@ logger.remove()
 REQUESTS_PER_SESSION_REFRESH = 5000
 
 
+class AuthorizationError(Exception):
+    """Custom exception for errors occuring when pulling
+    authorization header with webdriver, use for retries"""
+
+
 def json_set_default(obj):
     logger.warning("Unable to fully serialize JSON data!")
     return f"[unserializable: {str(obj)}]"
@@ -41,7 +47,11 @@ def write_tqdm(*args, **kwargs):
 
 logger.add(write_tqdm)
 
-proxies = {"http": os.getenv("http_proxy"), "https": os.getenv("https_proxy")}
+proxies = {
+    "http": os.getenv("HTTPS_PROXY"),
+    "https": os.getenv("HTTPS_PROXY"),
+    "no_proxy": "localhost,127.0.0.1",
+}
 
 # Constants
 GAB_BASE_URL = "https://gab.com"
@@ -537,6 +547,7 @@ class Client:
             return
 
     # Adapted from https://github.com/ChrisStevens/garc
+    @retry(AuthorizationError, tries=10)
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
@@ -550,13 +561,20 @@ class Client:
         options = webdriver.ChromeOptions()
         options.add_argument("--disable-gpu")
         options.headless = True
-        driver = uc.Chrome(enable_cdp_events=True, options=options)
+        sel_options = {"proxy": proxies}
+        logger.debug(f"Current proxy settings: {sel_options}")
+        driver = uc.Chrome(
+            enable_cdp_events=True,
+            options=options,
+            seleniumwire_options=sel_options,
+            service_args=["--verbose", "--log-path=/tmp/gabber_chromedriver.log"],
+        )
         driver.add_cdp_listener("Network.requestWillBeSent", bearer_auth_listener)
-        driver.get(url)
+        driver.set_page_load_timeout(60)
         cookies = {}
 
-        # TODO: see if we can iterate on retries to increase sleep times
         try:
+            driver.get(url)
             sleep(5)  # sleep to allow page to load, cf_challenge to complete.
             username_input = driver.find_element(By.ID, "user_email")
             password_input = driver.find_element(By.ID, "user_password")
@@ -569,7 +587,6 @@ class Client:
             # Selenium-based driver pulls more cookie metadata than needed. Move cookies to key-value pair.
             for cookie in driver.get_cookies():
                 cookies[cookie["name"]] = cookie["value"]
-            # TODO: check that required session cookie is present
 
             driver.close()
             return cookies
@@ -578,7 +595,11 @@ class Client:
             logger.exception(no_element)
             # Without a valid session cookie, pulls for posts will not terminate.
             # Raise exception and terminate here.
-            raise (no_element)
+            raise (AuthorizationError)
+        except selenium.common.exceptions.WebDriverException as chrome_driver_exception:
+            logger.error("Issue initializing Chrome driver. Try running again.")
+            logger.exception(chrome_driver_exception)
+            raise (AuthorizationError)
 
 
 @click.group()
