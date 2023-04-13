@@ -61,14 +61,14 @@ Options:
 
 ### `followers` and `following`
 ```text
-Usage: gabber [followers | following] [OPTIONS]
+Usage: gabber [followers|following] [OPTIONS]
 
-  Experimental feature: pull followers from a Gab account.
+  Experimental feature: pull followers from a Gab account / pull list of accounts that a Gab account follows.
 
 Options:
-  --id INTEGER           User id from which to pull followers.
-  --followers-file TEXT  Where to output the followers file to
-  --help                 Show this message and exit.
+  --id INTEGER                User id from which to pull followers.
+  --[followers|following]-file-path TEXT  Where to output the followers file to
+  --help                      Show this message and exit.
   ```
 
 ## Environment Variables
