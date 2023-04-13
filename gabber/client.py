@@ -80,6 +80,12 @@ def extract_url_from_link_header(link: string) -> string:
         return ""
 
 
+# TODO:
+# if just getting session cookie (without bearer token) doesn't work to pull follow[ers]s
+# conditionally get session cookie OR auth header depending on option invoked in CLI
+# or -- add condition in `_get` to drop auth bearer token when requesting status_comments
+
+
 class Client:
     def __init__(self, username: str, password: str, threads: int):
         self.username = username
@@ -106,13 +112,14 @@ class Client:
         )
         # s.mount("http://", HTTPAdapter(max_retries=retries))
         # s.mount("https://", HTTPAdapter(max_retries=retries))
-        response = s.get(
-            *args, proxies=proxies, headers=self.headers, timeout=30, **kwargs
-        )
-        logger.info(f"GET: {response.url}")
-        logger.info(
-            f"Response status: {response.status_code} {response.reason} {response.text}"
-        )
+        url = args[0]
+        # strangely, the status_comments endpoint only appears to work if we use curl_cffi
+        # and strip all headers and cookies.
+        if "status_comments" in url:
+            response = s.get(*args, timeout=30, **kwargs)
+
+        else:
+            response = s.get(*args, headers=self.headers, timeout=30, **kwargs)
 
         if not skip_sess_refresh:
             self._requests_since_refresh += 1
@@ -128,28 +135,23 @@ class Client:
     def _pull_replies(self, post_id, posts_array):
         gab_reply_link = GAB_API_BASE_URL + "v1/status_comments/" + post_id
         page_number = 1
-        # next_replies = gab_reply_link + "?max_id=" + str(page_number)
-
+        replies = []
         while True:
             try:
                 logger.debug(f"Getting replies on post {post_id} via {gab_reply_link}")
-                logger.debug(f"My session cookie: {self.sess_cookie}")
                 resp = self._get(
                     gab_reply_link,
                     params={"max_id": page_number},
-                    cookies=self.sess_cookie,
+                    # see note in `_get``: need to strip session info when pulling replies,
+                    # so do not add cookies to get request
                 ).json()
                 if len(resp) == 0:
                     break
-                else:
-                    logger.debug(f"Response length: {len(resp)}")
-                    logger.debug(resp)
 
                 for post in resp:
-                    posts_array.append(post)
+                    replies.append(post)
 
                 page_number += 1
-                # next_replies = gab_reply_link + "?max_id=" + str(page_number)
             except Exception as e:
                 logger.error(
                     f"Misc. error while pulling replies on post {post_id}: {str(e)}"
@@ -157,7 +159,7 @@ class Client:
                 print("N/A")
                 break
 
-        return
+        return replies
 
     # Account lookup by username
     def lookup_by_username(self, username: str):
@@ -389,11 +391,9 @@ class Client:
                 num_replies = post.get("replies_count")
 
                 if replies and num_replies > 0:
-                    logger.debug("Replies found")
-                    self._pull_replies(post["id"], all_posts)
-                # else:
-                #     logger.debug(f"Replies enabled: {replies}")
-                #     logger.debug(f"Replies count: {num_replies}")
+                    logger.debug(f"{num_replies} replies found")
+                    replies = self._pull_replies(post["id"], all_posts)
+                    all_posts.extend(replies)
 
                 all_posts.append(post)
 
@@ -709,7 +709,6 @@ def followers(ctx, followers_file_path: string, id: int):
     with open(followers_file_path, "w") as followers_file:
         follow_generator = client.pull_follow(id, endpoint="followers")
         for followers in follow_generator:
-            # TODO: track condition for output file: if does not exist, just print to stdout
             for account in followers:
                 print(
                     json.dumps(account, default=json_set_default),
