@@ -563,7 +563,6 @@ class Client:
         options.add_argument("--disable-gpu")
         options.headless = True
         sel_options = {"proxy": proxies}
-        logger.debug(f"Current proxy settings: {sel_options}")
         driver = uc.Chrome(
             enable_cdp_events=True,
             options=options,
@@ -577,7 +576,7 @@ class Client:
         try:
             driver.get(url)
             # sleep(5)  # sleep to allow page to load, cf_challenge to complete.
-            username_input = driver.find_element(By.ID, "user_fmail")
+            username_input = driver.find_element(By.ID, "user_email")
             password_input = driver.find_element(By.ID, "user_password")
             login_button = driver.find_element(By.CLASS_NAME, "btn")
 
@@ -642,12 +641,12 @@ def lookup(ctx, username: str):
 @cli.command("followers")
 @click.option("--id", help="User id from which to pull followers.", type=int)
 @click.option(
-    "--followers-file",
+    "--followers-file-path",
     default="gab_followers.jsonl",
     help="Where to output the followers file to",
 )
 @click.pass_context
-def followers(ctx, followers_file: string, id: int):
+def followers(ctx, followers_file_path: string, id: int):
     """
     Experimental feature: pull followers from a Gab account.
     """
@@ -657,7 +656,7 @@ def followers(ctx, followers_file: string, id: int):
     if id is None:
         id = client.find_latest_user()
 
-    with open(followers_file, "w") as followers_file:
+    with open(followers_file_path, "w") as followers_file:
         follow_generator = client.pull_follow(id, endpoint="followers")
         for followers in follow_generator:
             # TODO: track condition for output file: if does not exist, just print to stdout
@@ -667,6 +666,7 @@ def followers(ctx, followers_file: string, id: int):
                     file=followers_file,
                     flush=True,
                 )
+    logger.info(f"Wrote followers of user #{id} to disk at '{followers_file_path}'.")
 
 
 @cli.command("following")
@@ -674,12 +674,12 @@ def followers(ctx, followers_file: string, id: int):
     "--id", help="User id from which to pull accounts they are following.", type=int
 )
 @click.option(
-    "--following-file",
+    "--following-file-path",
     default="gab_following.jsonl",
     help="Where to output the following file to",
 )
 @click.pass_context
-def following(ctx, following_file: string, id: int):
+def following(ctx, following_file_path: string, id: int):
     """
     Experimental feature: pull list of accounts that a Gab account follows.
     """
@@ -689,7 +689,7 @@ def following(ctx, following_file: string, id: int):
     if id is None:
         id = client.find_latest_user()
 
-    with open(following_file, "w") as following_file:
+    with open(following_file_path, "w") as following_file:
         follow_generator = client.pull_follow(id, endpoint="following")
         for following in follow_generator:
             for account in following:
@@ -698,6 +698,9 @@ def following(ctx, following_file: string, id: int):
                     file=following_file,
                     flush=True,
                 )
+    logger.info(
+        f"Wrote accounts user #{id} is following to disk at '{following_file_path}'."
+    )
 
 
 @cli.command("users")
