@@ -16,6 +16,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from urllib3 import Retry
 from concurrent import futures
+from retry import retry
 
 
 from tqdm import tqdm
@@ -31,6 +32,12 @@ from selenium import webdriver
 logger.remove()
 
 REQUESTS_PER_SESSION_REFRESH = 5000
+AUTH_TOKEN_RETRIES = 10
+
+
+class AuthorizationError(Exception):
+    """Custom exception for errors occuring when pulling
+    authorization header with webdriver, use for retries"""
 
 
 def json_set_default(obj):
@@ -44,7 +51,11 @@ def write_tqdm(*args, **kwargs):
 
 logger.add(write_tqdm)
 
-proxies = {"http": os.getenv("http_proxy"), "https": os.getenv("https_proxy")}
+proxies = {
+    "http": os.getenv("HTTPS_PROXY"),
+    "https": os.getenv("HTTPS_PROXY"),
+    "no_proxy": "localhost,127.0.0.1",
+}
 
 # Constants
 GAB_BASE_URL = "https://gab.com"
@@ -586,6 +597,7 @@ class Client:
             return
 
     # Adapted from https://github.com/ChrisStevens/garc
+    @retry(AuthorizationError, tries=AUTH_TOKEN_RETRIES)
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
@@ -599,14 +611,20 @@ class Client:
         options = webdriver.ChromeOptions()
         options.add_argument("--disable-gpu")
         options.headless = True
-        driver = uc.Chrome(enable_cdp_events=True, options=options)
+        sel_options = {"proxy": proxies}
+        driver = uc.Chrome(
+            enable_cdp_events=True,
+            options=options,
+            seleniumwire_options=sel_options,
+            service_args=["--verbose", "--log-path=/tmp/gabber_chromedriver.log"],
+        )
         driver.add_cdp_listener("Network.requestWillBeSent", bearer_auth_listener)
-        driver.get(url)
+        driver.set_page_load_timeout(60)
         cookies = {}
 
-        # TODO: see if we can iterate on retries to increase sleep times
         try:
-            sleep(5)  # sleep to allow page to load, cf_challenge to complete.
+            driver.get(url)
+            # sleep(5)  # sleep to allow page to load, cf_challenge to complete.
             username_input = driver.find_element(By.ID, "user_email")
             password_input = driver.find_element(By.ID, "user_password")
             login_button = driver.find_element(By.CLASS_NAME, "btn")
@@ -614,21 +632,25 @@ class Client:
             username_input.send_keys(username)
             password_input.send_keys(password)
             login_button.click()
-            sleep(5)  # sleep to allow page to load
+            # sleep(5)  # sleep to allow page to load
             # Selenium-based driver pulls more cookie metadata than needed. Move cookies to key-value pair.
             for cookie in driver.get_cookies():
                 cookies[cookie["name"]] = cookie["value"]
-            # TODO: check that required session cookie is present
 
-            driver.close()
-            return cookies
         except selenium.common.exceptions.NoSuchElementException as no_element:
             logger.error("Page did not load quickly enough.")
             logger.exception(no_element)
             driver.quit()
             # Without a valid session cookie, pulls for posts will not terminate.
             # Raise exception and terminate here.
-            raise (no_element)
+            raise (AuthorizationError)
+        except selenium.common.exceptions.WebDriverException as chrome_driver_exception:
+            logger.error("Issue initializing Chrome driver. Try running again.")
+            logger.exception(chrome_driver_exception)
+            raise (AuthorizationError)
+        finally:
+            driver.quit()
+        return cookies
 
 
 @click.group()
@@ -669,12 +691,12 @@ def lookup(ctx, username: str):
 @cli.command("followers")
 @click.option("--id", help="User id from which to pull followers.", type=int)
 @click.option(
-    "--followers-file",
+    "--followers-file-path",
     default="gab_followers.jsonl",
     help="Where to output the followers file to",
 )
 @click.pass_context
-def followers(ctx, followers_file: string, id: int):
+def followers(ctx, followers_file_path: string, id: int):
     """
     Experimental feature: pull followers from a Gab account.
     """
@@ -684,15 +706,17 @@ def followers(ctx, followers_file: string, id: int):
     if id is None:
         id = client.find_latest_user()
 
-    with open(followers_file, "w") as followers_file:
+    with open(followers_file_path, "w") as followers_file:
         follow_generator = client.pull_follow(id, endpoint="followers")
         for followers in follow_generator:
+            # TODO: track condition for output file: if does not exist, just print to stdout
             for account in followers:
                 print(
                     json.dumps(account, default=json_set_default),
                     file=followers_file,
                     flush=True,
                 )
+    logger.info(f"Wrote followers of user #{id} to disk at '{followers_file_path}'.")
 
 
 @cli.command("following")
@@ -700,12 +724,12 @@ def followers(ctx, followers_file: string, id: int):
     "--id", help="User id from which to pull accounts they are following.", type=int
 )
 @click.option(
-    "--following-file",
+    "--following-file-path",
     default="gab_following.jsonl",
     help="Where to output the following file to",
 )
 @click.pass_context
-def following(ctx, following_file: string, id: int):
+def following(ctx, following_file_path: string, id: int):
     """
     Experimental feature: pull list of accounts that a Gab account follows.
     """
@@ -715,7 +739,7 @@ def following(ctx, following_file: string, id: int):
     if id is None:
         id = client.find_latest_user()
 
-    with open(following_file, "w") as following_file:
+    with open(following_file_path, "w") as following_file:
         follow_generator = client.pull_follow(id, endpoint="following")
         for following in follow_generator:
             for account in following:
@@ -724,6 +748,9 @@ def following(ctx, following_file: string, id: int):
                     file=following_file,
                     flush=True,
                 )
+    logger.info(
+        f"Wrote accounts user #{id} is following to disk at '{following_file_path}'."
+    )
 
 
 @cli.command("users")

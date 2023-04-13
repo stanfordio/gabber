@@ -59,10 +59,22 @@ Options:
   --help                Show this message and exit.
 ```
 
+### `followers` and `following`
+```text
+Usage: gabber [followers|following] [OPTIONS]
+
+  Experimental feature: pull followers from a Gab account / pull list of accounts that a Gab account follows.
+
+Options:
+  --id INTEGER                User id from which to pull followers.
+  --[followers|following]-file-path TEXT  Where to output the followers file to
+  --help                      Show this message and exit.
+  ```
+
 ## Environment Variables
 
-* `HTTP_PROXY` — route all traffic through this HTTP proxy (highly recommended given Gab's rate limiting)
 * `HTTPS_PROXY` — route all traffic through this HTTPS proxy (highly recommended given Gab's rate limiting)
+* * Note: if you have a pre-existing `HTTP_PROXY` environment variable, this may be picked up by Python's requests library and produce errors.
 * `GAB_USER` — the (optional) username to authenticate as with Gab
 * `GAB_PASS` — the (optional) password to use while authenticating with Gab
 
