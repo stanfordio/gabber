@@ -422,12 +422,25 @@ class Client:
 
         user = self.pull_user(id)
 
+        # replies endpoint will add more statuses than are listed for the account
+        # also unset 'expected_count' if the user does not exist
+        # or if user creation date is before cutoff.
+        logger.debug(f"user {id}: {user['created_at']} - {created_after}")
+        if (created_after) and created_after > date.fromisoformat(
+            user.get("created_at").split("T")[0]
+        ):
+            expected_count = None
+        elif replies or user is None:
+            expected_count = None
+        else:
+            expected_count = user.get("statuses_count")
+
         posts = (
             self.pull_statuses(
                 id,
                 created_after,
                 replies,
-                expected_count=user.get("statuses_count") if user is not None else None,
+                expected_count=expected_count,
             )
             if user.get("_available") and pull_posts
             else []
