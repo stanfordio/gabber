@@ -149,6 +149,7 @@ class Client:
                     break
 
                 for post in resp:
+                    post["_pulled"] = datetime.now().isoformat()
                     replies.append(post)
 
                 page_number += 1
