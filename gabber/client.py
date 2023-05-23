@@ -4,8 +4,7 @@ import string
 import re
 from time import sleep
 import click
-
-# import requests
+import random
 
 from curl_cffi import requests
 from itertools import islice
@@ -93,7 +92,7 @@ class Client:
         self.threads = threads
         self._requests_since_refresh = 0
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
         }
         if username and password:
             self.sess_cookie = self.get_sess_cookie(username, password)
@@ -693,7 +692,6 @@ def cli(ctx, user, password, threads):
 @click.argument("username", type=str)
 @click.pass_context
 def lookup(ctx, username: str):
-
     client: Client = ctx.obj["client"]
     if not client.username or not client.password:
         raise ValueError("To pull data you must provide a Gab username and password!")
@@ -832,7 +830,10 @@ def users(
                 try:
                     done = await_any(f)
                     for completed in done:
-                        (user, found_posts,) = completed.result(
+                        (
+                            user,
+                            found_posts,
+                        ) = completed.result(
                             0
                         )  # Waits until complete
 
@@ -922,7 +923,10 @@ def groups(
                 try:
                     done = await_any(f)
                     for completed in done:
-                        (group, found_posts,) = completed.result(
+                        (
+                            group,
+                            found_posts,
+                        ) = completed.result(
                             0
                         )  # Waits until complete
 
