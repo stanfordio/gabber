@@ -6,7 +6,7 @@ authors = ["R. Miles McCain <mccain@stanford.edu>"]
 
 [tool.poetry.dependencies]
 python = "^3.8"
-requests = "^2.26.0"
+requests = "^2.31.0"
 click = "^8.0.1"
 python-dateutil = "^2.8.2"
 loguru = "^0.6.0"
