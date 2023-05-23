@@ -282,6 +282,30 @@ files = [
 ]
 
 [[package]]
+name = "curl-cffi"
+version = "0.5.3"
+description = "libcurl ffi bindings for Python, with impersonation support"
+category = "main"
+optional = false
+python-versions = ">=3.7"
+files = [
+    {file = "curl_cffi-0.5.3-cp37-abi3-macosx_10_9_x86_64.whl", hash = "sha256:5594dbd422d0cacd79e2fb868aa22c8a99f835a88123c00f09daabdbe8d0ddc0"},
+    {file = "curl_cffi-0.5.3-cp37-abi3-macosx_11_0_arm64.whl", hash = "sha256:711ff513c4f3402b5282f20867cdc1ccc08bb77dd09083374e9f8e00c4521534"},
+    {file = "curl_cffi-0.5.3-cp37-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:98e6096d88f9168aabeca36ec0ec0f72d7ea2ba6b3b49d2172751f8b32a7b8c8"},
+    {file = "curl_cffi-0.5.3-cp37-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b84e9afdfbde1c47ae91e0c257220f2ff7c103ab7611c5015a7350302b0755f7"},
+    {file = "curl_cffi-0.5.3-cp37-abi3-win_amd64.whl", hash = "sha256:09e502c1295902be52863bb98f46af8bbcea613566afd720631eb66dc3b84795"},
+    {file = "curl_cffi-0.5.3.tar.gz", hash = "sha256:1c654fd5e5ee009a176e0c01b96370393e50200441b0ae34d4bc5edf4e67595e"},
+]
+
+[package.dependencies]
+cffi = ">=1.12.0"
+
+[package.extras]
+build = ["cibuildwheel", "wheel"]
+dev = ["autoflake (==1.4)", "black (==22.8.0)", "coverage (==6.4.1)", "cryptography (==38.0.3)", "flake8 (==6.0.0)", "flake8-bugbear (==22.7.1)", "flake8-pie (==0.15.0)", "httpx (==0.23.1)", "isort (==5.10.1)", "mypy (==0.971)", "pytest (==7.1.2)", "pytest-asyncio (==0.19.0)", "pytest-trio (==0.7.0)", "trio (==0.21.0)", "trio-typing (==0.7.0)", "trustme (==0.9.0)", "types-certifi (==2021.10.8.2)", "uvicorn (==0.18.3)"]
+test = ["cryptography (==38.0.3)", "httpx (==0.23.1)", "pytest (==7.1.2)", "pytest-asyncio (==0.19.0)", "pytest-trio (==0.7.0)", "trio (==0.21.0)", "trio-typing (==0.7.0)", "trustme (==0.9.0)", "types-certifi (==2021.10.8.2)", "uvicorn (==0.18.3)"]
+
+[[package]]
 name = "exceptiongroup"
 version = "1.1.1"
 description = "Backport of PEP 654 (exception groups)"

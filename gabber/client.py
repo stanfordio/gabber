@@ -4,7 +4,10 @@ import string
 import re
 from time import sleep
 import click
-import requests
+
+# import requests
+
+from curl_cffi import requests
 from itertools import islice
 from datetime import datetime, date, timedelta, timezone
 from loguru import logger
@@ -13,6 +16,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor
 from urllib3 import Retry
 from concurrent import futures
+from retry import retry
 
 
 from tqdm import tqdm
@@ -28,6 +32,12 @@ from selenium import webdriver
 logger.remove()
 
 REQUESTS_PER_SESSION_REFRESH = 5000
+AUTH_TOKEN_RETRIES = 10
+
+
+class AuthorizationError(Exception):
+    """Custom exception for errors occuring when pulling
+    authorization header with webdriver, use for retries"""
 
 
 def json_set_default(obj):
@@ -41,7 +51,11 @@ def write_tqdm(*args, **kwargs):
 
 logger.add(write_tqdm)
 
-proxies = {"http": os.getenv("http_proxy"), "https": os.getenv("https_proxy")}
+proxies = {
+    "http": os.getenv("HTTPS_PROXY"),
+    "https": os.getenv("HTTPS_PROXY"),
+    "no_proxy": "localhost,127.0.0.1",
+}
 
 # Constants
 GAB_BASE_URL = "https://gab.com"
@@ -64,6 +78,12 @@ def extract_url_from_link_header(link: string) -> string:
         return re.findall(pattern, link)[0]
     else:
         return ""
+
+
+# TODO:
+# if just getting session cookie (without bearer token) doesn't work to pull follow[ers]s
+# conditionally get session cookie OR auth header depending on option invoked in CLI
+# or -- add condition in `_get` to drop auth bearer token when requesting status_comments
 
 
 class Client:
@@ -90,13 +110,16 @@ class Client:
             backoff_factor=0.5,
             status_forcelist=[413, 429, 503, 403, 500, 502, 523, 520],
         )
-        s.mount("http://", HTTPAdapter(max_retries=retries))
-        s.mount("https://", HTTPAdapter(max_retries=retries))
-        response = s.get(
-            *args, proxies=proxies, headers=self.headers, timeout=30, **kwargs
-        )
-        logger.info(f"GET: {response.url}")
-        logger.info(f"Response status: {response.status_code}")
+        # s.mount("http://", HTTPAdapter(max_retries=retries))
+        # s.mount("https://", HTTPAdapter(max_retries=retries))
+        url = args[0]
+        # strangely, the status_comments endpoint only appears to work if we use curl_cffi
+        # and strip all headers and cookies.
+        if "status_comments" in url:
+            response = s.get(*args, timeout=30, **kwargs)
+
+        else:
+            response = s.get(*args, headers=self.headers, timeout=30, **kwargs)
 
         if not skip_sess_refresh:
             self._requests_since_refresh += 1
@@ -108,6 +131,35 @@ class Client:
                 self._requests_since_refresh = 0
 
         return response
+
+    def _pull_replies(self, post_id, posts_array):
+        gab_reply_link = GAB_API_BASE_URL + "v1/status_comments/" + post_id
+        page_number = 1
+        replies = []
+        while True:
+            try:
+                logger.debug(f"Getting replies on post {post_id} via {gab_reply_link}")
+                resp = self._get(
+                    gab_reply_link,
+                    params={"max_id": page_number},
+                    # see note in `_get``: need to strip session info when pulling replies,
+                    # so do not add cookies to get request
+                ).json()
+                if len(resp) == 0:
+                    break
+
+                for post in resp:
+                    replies.append(post)
+
+                page_number += 1
+            except Exception as e:
+                logger.error(
+                    f"Misc. error while pulling replies on post {post_id}: {str(e)}"
+                )
+                print("N/A")
+                break
+
+        return replies
 
     # Account lookup by username
     def lookup_by_username(self, username: str):
@@ -292,11 +344,12 @@ class Client:
 
         params = {}
         all_posts = []
+        logger.debug(f"Pulling statuses for user {id}")
         while True:
             try:
                 url = GAB_API_BASE_URL + f"v1/accounts/{id}/statuses"
-                if not replies:
-                    url += "?exclude_replies=true"
+                # if not replies:
+                #     url += "?exclude_replies=true"
                 result = self._get(url, params=params, cookies=self.sess_cookie).json()
             except json.JSONDecodeError as e:
                 logger.error(f"Unable to pull user #{id}'s statuses': {e}")
@@ -335,6 +388,13 @@ class Client:
                 if created_after and date_created < created_after:
                     continue
 
+                num_replies = post.get("replies_count")
+
+                if replies and num_replies > 0:
+                    logger.debug(f"{num_replies} replies found")
+                    replies = self._pull_replies(post["id"], all_posts)
+                    all_posts.extend(replies)
+
                 all_posts.append(post)
 
         if expected_count is not None and retries_remaining > 0:
@@ -362,12 +422,25 @@ class Client:
 
         user = self.pull_user(id)
 
+        # replies endpoint will add more statuses than are listed for the account
+        # also unset 'expected_count' if the user does not exist
+        # or if user creation date is before cutoff.
+        logger.debug(f"user {id}: {user['created_at']} - {created_after}")
+        if (created_after) and created_after > date.fromisoformat(
+            user.get("created_at").split("T")[0]
+        ):
+            expected_count = None
+        elif replies or user is None:
+            expected_count = None
+        else:
+            expected_count = user.get("statuses_count")
+
         posts = (
             self.pull_statuses(
                 id,
                 created_after,
                 replies,
-                expected_count=user.get("statuses_count") if user is not None else None,
+                expected_count=expected_count,
             )
             if user.get("_available") and pull_posts
             else []
@@ -537,6 +610,7 @@ class Client:
             return
 
     # Adapted from https://github.com/ChrisStevens/garc
+    @retry(AuthorizationError, tries=AUTH_TOKEN_RETRIES)
     def get_sess_cookie(self, username, password):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
@@ -550,14 +624,20 @@ class Client:
         options = webdriver.ChromeOptions()
         options.add_argument("--disable-gpu")
         options.headless = True
-        driver = uc.Chrome(enable_cdp_events=True, options=options)
+        sel_options = {"proxy": proxies}
+        driver = uc.Chrome(
+            enable_cdp_events=True,
+            options=options,
+            seleniumwire_options=sel_options,
+            service_args=["--verbose", "--log-path=/tmp/gabber_chromedriver.log"],
+        )
         driver.add_cdp_listener("Network.requestWillBeSent", bearer_auth_listener)
-        driver.get(url)
+        driver.set_page_load_timeout(60)
         cookies = {}
 
-        # TODO: see if we can iterate on retries to increase sleep times
         try:
-            sleep(5)  # sleep to allow page to load, cf_challenge to complete.
+            driver.get(url)
+            # sleep(5)  # sleep to allow page to load, cf_challenge to complete.
             username_input = driver.find_element(By.ID, "user_email")
             password_input = driver.find_element(By.ID, "user_password")
             login_button = driver.find_element(By.CLASS_NAME, "btn")
@@ -565,20 +645,25 @@ class Client:
             username_input.send_keys(username)
             password_input.send_keys(password)
             login_button.click()
-            sleep(5)  # sleep to allow page to load
+            # sleep(5)  # sleep to allow page to load
             # Selenium-based driver pulls more cookie metadata than needed. Move cookies to key-value pair.
             for cookie in driver.get_cookies():
                 cookies[cookie["name"]] = cookie["value"]
-            # TODO: check that required session cookie is present
 
-            driver.close()
-            return cookies
         except selenium.common.exceptions.NoSuchElementException as no_element:
             logger.error("Page did not load quickly enough.")
             logger.exception(no_element)
+            driver.quit()
             # Without a valid session cookie, pulls for posts will not terminate.
             # Raise exception and terminate here.
-            raise (no_element)
+            raise (AuthorizationError)
+        except selenium.common.exceptions.WebDriverException as chrome_driver_exception:
+            logger.error("Issue initializing Chrome driver. Try running again.")
+            logger.exception(chrome_driver_exception)
+            raise (AuthorizationError)
+        finally:
+            driver.quit()
+        return cookies
 
 
 @click.group()
@@ -619,12 +704,12 @@ def lookup(ctx, username: str):
 @cli.command("followers")
 @click.option("--id", help="User id from which to pull followers.", type=int)
 @click.option(
-    "--followers-file",
+    "--followers-file-path",
     default="gab_followers.jsonl",
     help="Where to output the followers file to",
 )
 @click.pass_context
-def followers(ctx, followers_file: string, id: int):
+def followers(ctx, followers_file_path: string, id: int):
     """
     Experimental feature: pull followers from a Gab account.
     """
@@ -634,7 +719,7 @@ def followers(ctx, followers_file: string, id: int):
     if id is None:
         id = client.find_latest_user()
 
-    with open(followers_file, "w") as followers_file:
+    with open(followers_file_path, "w") as followers_file:
         follow_generator = client.pull_follow(id, endpoint="followers")
         for followers in follow_generator:
             for account in followers:
@@ -643,6 +728,7 @@ def followers(ctx, followers_file: string, id: int):
                     file=followers_file,
                     flush=True,
                 )
+    logger.info(f"Wrote followers of user #{id} to disk at '{followers_file_path}'.")
 
 
 @cli.command("following")
@@ -650,12 +736,12 @@ def followers(ctx, followers_file: string, id: int):
     "--id", help="User id from which to pull accounts they are following.", type=int
 )
 @click.option(
-    "--following-file",
+    "--following-file-path",
     default="gab_following.jsonl",
     help="Where to output the following file to",
 )
 @click.pass_context
-def following(ctx, following_file: string, id: int):
+def following(ctx, following_file_path: string, id: int):
     """
     Experimental feature: pull list of accounts that a Gab account follows.
     """
@@ -665,7 +751,7 @@ def following(ctx, following_file: string, id: int):
     if id is None:
         id = client.find_latest_user()
 
-    with open(following_file, "w") as following_file:
+    with open(following_file_path, "w") as following_file:
         follow_generator = client.pull_follow(id, endpoint="following")
         for following in follow_generator:
             for account in following:
@@ -674,6 +760,9 @@ def following(ctx, following_file: string, id: int):
                     file=following_file,
                     flush=True,
                 )
+    logger.info(
+        f"Wrote accounts user #{id} is following to disk at '{following_file_path}'."
+    )
 
 
 @cli.command("users")
