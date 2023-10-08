@@ -13,6 +13,9 @@ Options:
                      unspecified, uses GAB_PASS environment variable.
   --threads INTEGER  Number of threads to use in the pull (if unspecified,
                      defaults to 25).
+  --headless BOOLEAN  Set to True to run in headless mode, set to False to run
+                      with browser instance. If unspecified, defaults to
+                      headless.
   --help             Show this message and exit.
 
 Commands:
