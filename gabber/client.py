@@ -436,7 +436,7 @@ class Client:
         # replies endpoint will add more statuses than are listed for the account
         # also unset 'expected_count' if the user does not exist
         # or if user creation date is before cutoff.
-        logger.debug(f"user {id}: {user['created_at']} - {created_after}")
+        logger.debug(f"user {id}: {user.get('created_at')} - {created_after}")
         if (created_after) and created_after > date.fromisoformat(
             user.get("created_at").split("T")[0]
         ):
