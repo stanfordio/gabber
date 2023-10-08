@@ -94,7 +94,7 @@ def extract_url_from_link_header(link: string) -> string:
 
 
 class Client:
-    def __init__(self, username: str, password: str, threads: int):
+    def __init__(self, username: str, password: str, threads: int, headless: bool):
         self.username = username
         self.password = password
         self.threads = threads
@@ -103,7 +103,7 @@ class Client:
             "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:103.0) Gecko/20100101 Firefox/103.0",
         }
         if username and password:
-            self.sess_cookie = self.get_sess_cookie(username, password)
+            self.sess_cookie = self.get_sess_cookie(username, password, headless)
 
     # Rate-limited _get function
     @sleep_and_retry
@@ -622,7 +622,7 @@ class Client:
 
     # Adapted from https://github.com/ChrisStevens/garc
     @retry(AuthorizationError, tries=AUTH_TOKEN_RETRIES)
-    def get_sess_cookie(self, username, password):
+    def get_sess_cookie(self, username, password, headless=True):
         """Logs in to Gab account and returns the session cookie"""
         url = GAB_BASE_URL + "/auth/sign_in"
         logger.debug("Getting session cookie.")
@@ -634,7 +634,7 @@ class Client:
 
         options = webdriver.ChromeOptions()
         options.add_argument("--disable-gpu")
-        options.headless = True
+        options.headless = headless
         sel_options = {"proxy": proxies}
         logger.debug(f"Working with options: {sel_options}")
         driver = uc.Chrome(
@@ -695,10 +695,15 @@ class Client:
     help="Number of threads to use in the pull (if unspecified, defaults to 25).",
     type=int,
 )
+@click.option(
+    "--headless",
+    default=True,
+    help="Set to True to run in headless mode, set to False to run with browser instance. If unspecified, defaults to headless.",
+)
 @click.pass_context
-def cli(ctx, user, password, threads):
+def cli(ctx, user, password, threads, headless):
     ctx.ensure_object(dict)
-    ctx.obj["client"] = Client(user, password, threads)
+    ctx.obj["client"] = Client(user, password, threads, headless)
 
 
 @cli.command("lookup")
