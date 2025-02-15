@@ -92,7 +92,7 @@ class Client:
         self.threads = threads
         self._requests_since_refresh = 0
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
         }
         if username and password:
             self.sess_cookie = self.get_sess_cookie(username, password)
