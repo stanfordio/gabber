@@ -1,19 +1,16 @@
 import os
-import sys
-import string
 import re
+import subprocess
+import sys
 from time import sleep
 import click
-import random
 
 from curl_cffi import requests
 from itertools import islice
 from datetime import datetime, date, timedelta, timezone
 from loguru import logger
-from requests.sessions import HTTPAdapter
 import json
 from concurrent.futures import ThreadPoolExecutor
-from urllib3 import Retry
 from concurrent import futures
 from retry import retry
 
@@ -22,10 +19,6 @@ from tqdm import tqdm
 from typing import Iterable, List
 from dateutil.parser import parse as date_parse
 from ratelimit import limits, sleep_and_retry
-import undetected_chromedriver as uc
-from selenium.webdriver.common.by import By
-import selenium.common.exceptions
-from selenium import webdriver
 
 # Setup loggers
 logger.remove()
@@ -50,15 +43,35 @@ def write_tqdm(*args, **kwargs):
 
 logger.add(write_tqdm)
 
-proxies = {
-    "http": os.getenv("HTTPS_PROXY"),
-    "https": os.getenv("HTTPS_PROXY"),
-    "no_proxy": "localhost,127.0.0.1",
-}
-
 # Constants
 GAB_BASE_URL = "https://gab.com"
 GAB_API_BASE_URL = "https://gab.com/api/"
+
+
+def detect_chrome_major_version() -> int | None:
+    """Return the locally installed Chrome major version, or None if it can't be found.
+
+    undetected-chromedriver fetches the latest chromedriver by default; if that
+    version doesn't match the installed Chrome, session-create fails. Passing
+    `version_main` tells uc to fetch a matching driver.
+    """
+    candidates = [
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+    ]
+    for binary in candidates:
+        try:
+            out = subprocess.run(
+                [binary, "--version"], capture_output=True, text=True, timeout=5
+            )
+        except (FileNotFoundError, subprocess.SubprocessError):
+            continue
+        match = re.search(r"\b(\d+)\.\d+\.\d+\.\d+\b", out.stdout)
+        if match:
+            return int(match.group(1))
+    return None
 
 
 def await_any(items: List[futures.Future], pop=True):
@@ -69,7 +82,7 @@ def await_any(items: List[futures.Future], pop=True):
     return done
 
 
-def extract_url_from_link_header(link: string) -> string:
+def extract_url_from_link_header(link: str) -> str:
     """Helper method to pull urls from link header for iteration through accounts"""
     pattern = "https?://.+?max_id=\d+"
     matched_links = re.findall(pattern, link)
@@ -91,8 +104,24 @@ class Client:
         self.password = password
         self.threads = threads
         self._requests_since_refresh = 0
+        chrome_major = detect_chrome_major_version() or 147
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+            "User-Agent": (
+                f"Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                f"AppleWebKit/537.36 (KHTML, like Gecko) "
+                f"Chrome/{chrome_major}.0.0.0 Safari/537.36"
+            ),
+            # Chrome's GREASE brand and version rotate per major release; the
+            # shape below mirrors what curl-cffi's chrome-146 impersonation
+            # emitted. Servers that validate UA-CH parse the list and look for
+            # "Google Chrome" or "Chromium" rather than exact ordering.
+            "Sec-CH-UA": (
+                f'"Chromium";v="{chrome_major}", '
+                f'"Not-A.Brand";v="24", '
+                f'"Google Chrome";v="{chrome_major}"'
+            ),
+            "Sec-CH-UA-Mobile": "?0",
+            "Sec-CH-UA-Platform": '"Windows"',
         }
         if username and password:
             self.sess_cookie = self.get_sess_cookie(username, password)
@@ -104,13 +133,6 @@ class Client:
         """Wrapper for requests.get(), except it supports retries."""
 
         s = requests.Session()
-        retries = Retry(
-            total=10,
-            backoff_factor=0.5,
-            status_forcelist=[413, 429, 503, 403, 500, 502, 523, 520],
-        )
-        # s.mount("http://", HTTPAdapter(max_retries=retries))
-        # s.mount("https://", HTTPAdapter(max_retries=retries))
         url = args[0]
         # strangely, the status_comments endpoint only appears to work if we use curl_cffi
         # and strip all headers and cookies.
@@ -495,7 +517,7 @@ class Client:
 
         return all_results
 
-    def _was_account_created(self, id: int, accounts_or_groups: string) -> bool:
+    def _was_account_created(self, id: int, accounts_or_groups: str) -> bool:
         """
         Determine whether account was created, even if suspended.
         Returns true if request for account ID returns 200 or 410.
@@ -513,7 +535,7 @@ class Client:
         return self._find_latest(lower_bound=65937, accounts_or_groups="groups")
 
     def _find_latest(
-        self, lower_bound: int = 5318531, accounts_or_groups: string = "accounts"
+        self, lower_bound: int = 5318531, accounts_or_groups: str = "accounts"
     ) -> int:
         """Binary search to find the approximate latest user."""
         # lower_bound: Update this from time to time
@@ -568,7 +590,7 @@ class Client:
 
         return int(user["id"])
 
-    def pull_follow(self, id: int, endpoint: string):
+    def pull_follow(self, id: int, endpoint: str):
         follows = []
 
         logger.info(f"Pulling followers for user {id}.")
@@ -611,58 +633,59 @@ class Client:
     # Adapted from https://github.com/ChrisStevens/garc
     @retry(AuthorizationError, tries=AUTH_TOKEN_RETRIES)
     def get_sess_cookie(self, username, password):
-        """Logs in to Gab account and returns the session cookie"""
-        url = GAB_BASE_URL + "/auth/sign_in"
-        logger.debug("Getting session cookie.")
+        """Log in to Gab via the sign-in form and return the cookie jar.
 
-        def bearer_auth_listener(eventdata):
-            req_headers = eventdata["params"]["request"]["headers"]
-            if "Authorization" in req_headers:
-                self.headers["Authorization"] = req_headers["Authorization"]
+        Uses curl-cffi's Chrome TLS impersonation to POST the form directly,
+        then extracts the bearer token embedded in the post-login home page
+        (under `"access_token":"..."` in the bootstrap JSON) and stores it on
+        self.headers for subsequent API calls.
+        """
+        signin_url = GAB_BASE_URL + "/auth/sign_in"
+        logger.debug("Logging in to Gab.")
 
-        options = webdriver.ChromeOptions()
-        options.add_argument("--disable-gpu")
-        options.headless = True
-        sel_options = {"proxy": proxies}
-        driver = uc.Chrome(
-            enable_cdp_events=True,
-            options=options,
-            seleniumwire_options=sel_options,
-            service_args=["--verbose", "--log-path=/tmp/gabber_chromedriver.log"],
+        sess = requests.Session(impersonate="chrome")
+
+        form = sess.get(signin_url, headers=self.headers, timeout=30)
+        if form.status_code != 200:
+            raise AuthorizationError(
+                f"Sign-in page returned {form.status_code}; expected 200."
+            )
+        csrf_match = re.search(
+            r'name="authenticity_token"\s+value="([^"]+)"', form.text
         )
-        driver.add_cdp_listener("Network.requestWillBeSent", bearer_auth_listener)
-        driver.set_page_load_timeout(60)
-        cookies = {}
+        if not csrf_match:
+            raise AuthorizationError(
+                "CSRF authenticity_token not found on sign-in page."
+            )
 
-        try:
-            driver.get(url)
-            # sleep(5)  # sleep to allow page to load, cf_challenge to complete.
-            username_input = driver.find_element(By.ID, "user_email")
-            password_input = driver.find_element(By.ID, "user_password")
-            login_button = driver.find_element(By.CLASS_NAME, "btn")
+        login = sess.post(
+            signin_url,
+            headers=self.headers,
+            data={
+                "authenticity_token": csrf_match.group(1),
+                "user[email]": username,
+                "user[password]": password,
+                "button": "",
+            },
+            timeout=30,
+            allow_redirects=False,
+        )
+        if login.status_code != 302 or "_session_id" not in sess.cookies:
+            raise AuthorizationError(
+                f"Login failed (status={login.status_code}). "
+                f"Check credentials or for a CAPTCHA challenge."
+            )
 
-            username_input.send_keys(username)
-            password_input.send_keys(password)
-            login_button.click()
-            # sleep(5)  # sleep to allow page to load
-            # Selenium-based driver pulls more cookie metadata than needed. Move cookies to key-value pair.
-            for cookie in driver.get_cookies():
-                cookies[cookie["name"]] = cookie["value"]
+        home = sess.get(GAB_BASE_URL + "/", headers=self.headers, timeout=30)
+        bearer_match = re.search(r'"access_token"\s*:\s*"([^"]+)"', home.text)
+        if bearer_match:
+            self.headers["Authorization"] = f"Bearer {bearer_match.group(1)}"
+        else:
+            logger.warning(
+                "Bearer token not found on home page; some API endpoints may fail."
+            )
 
-        except selenium.common.exceptions.NoSuchElementException as no_element:
-            logger.error("Page did not load quickly enough.")
-            logger.exception(no_element)
-            driver.quit()
-            # Without a valid session cookie, pulls for posts will not terminate.
-            # Raise exception and terminate here.
-            raise (AuthorizationError)
-        except selenium.common.exceptions.WebDriverException as chrome_driver_exception:
-            logger.error("Issue initializing Chrome driver. Try running again.")
-            logger.exception(chrome_driver_exception)
-            raise (AuthorizationError)
-        finally:
-            driver.quit()
-        return cookies
+        return {name: value for name, value in sess.cookies.items()}
 
 
 @click.group()
@@ -707,7 +730,7 @@ def lookup(ctx, username: str):
     help="Where to output the followers file to",
 )
 @click.pass_context
-def followers(ctx, followers_file_path: string, id: int):
+def followers(ctx, followers_file_path: str, id: int):
     """
     Experimental feature: pull followers from a Gab account.
     """
@@ -739,7 +762,7 @@ def followers(ctx, followers_file_path: string, id: int):
     help="Where to output the following file to",
 )
 @click.pass_context
-def following(ctx, following_file_path: string, id: int):
+def following(ctx, following_file_path: str, id: int):
     """
     Experimental feature: pull list of accounts that a Gab account follows.
     """
