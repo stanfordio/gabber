@@ -1,3 +1,5 @@
+### Please see maintained fork at: https://github.com/w2rc/gabber
+
 # Gabber
 Simple tool to pull posts and users from Gab.
 
